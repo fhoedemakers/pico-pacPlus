@@ -222,6 +222,23 @@ extern "C" void o2em_render_frame(Byte *vscreen, Byte *col, int width, int heigh
             {
                 dst[x] = palette_lut[src[x] & 0x1f];
             }
+            if (settings.flags.displayFrameRate && y >= 8 && y < 16)
+            {
+                WORD fgc = palette_lut[15]; // white
+                WORD bgc = palette_lut[0];  // black
+                char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
+                int rowInChar = y - 8;
+                WORD *fpsBuffer = dst + 4;
+                for (int i = 0; i < 2; i++)
+                {
+                    char fontSlice = getcharslicefrom8x8font(fpsString[i], rowInChar);
+                    for (int bit = 0; bit < 8; bit++)
+                    {
+                        *fpsBuffer++ = (fontSlice & 1) ? fgc : bgc;
+                        fontSlice >>= 1;
+                    }
+                }
+            }
             dvi_->setLineBuffer(y, b);
         }
     }
@@ -232,6 +249,46 @@ extern "C" void o2em_render_frame(Byte *vscreen, Byte *col, int width, int heigh
         uint32_t tick_us = Frens::time_us() - start_tick_us;
         fps = (1000000 - 1) / tick_us + 1;
         start_tick_us = Frens::time_us();
+#if HSTX
+        WORD fgc = palette_lut[15]; // white
+        WORD bgc = palette_lut[0];  // black
+        char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
+        for (int y = 8; y < 16; y++)
+        {
+            WORD *fpsBuffer = hstx_getlineFromFramebuffer(y) + 4;
+            int rowInChar = y - 8;
+            for (int i = 0; i < 2; i++)
+            {
+                char fontSlice = getcharslicefrom8x8font(fpsString[i], rowInChar);
+                for (int bit = 0; bit < 8; bit++)
+                {
+                    *fpsBuffer++ = (fontSlice & 1) ? fgc : bgc;
+                    fontSlice >>= 1;
+                }
+            }
+        }
+#elif FRAMEBUFFERISPOSSIBLE
+        if (Frens::isFrameBufferUsed())
+        {
+            WORD fgc = palette_lut[15];
+            WORD bgc = palette_lut[0];
+            char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
+            for (int y = 8; y < 16; y++)
+            {
+                WORD *fpsBuffer = &Frens::framebuffer[y * 320 + 4];
+                int rowInChar = y - 8;
+                for (int i = 0; i < 2; i++)
+                {
+                    char fontSlice = getcharslicefrom8x8font(fpsString[i], rowInChar);
+                    for (int bit = 0; bit < 8; bit++)
+                    {
+                        *fpsBuffer++ = (fontSlice & 1) ? fgc : bgc;
+                        fontSlice >>= 1;
+                    }
+                }
+            }
+        }
+#endif
     }
 }
 
