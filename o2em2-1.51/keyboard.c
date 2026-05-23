@@ -25,14 +25,18 @@
 #include "voice.h"
 #include "vpp.h"
 #include "keyboard.h"
-#ifndef __O2EM_SDL__
-#include "allegro.h"
-#else
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#include "o2em_pico_callbacks.h"
+#elif defined(__O2EM_SDL__)
 #include "o2em_sdl.h"
+#else
+#include "allegro.h"
 #endif
 #include "score.h"
 
 int NeedsPoll = 0;
+int syskeys[12];
 
 Byte keycode;
 Byte last_key;
@@ -159,7 +163,6 @@ struct keyb keybtab[] = {
 
 
 int joykeys[2][5] = {{0,0,0,0,0},{0,0,0,0,0}};
-int joykeystab[KEY_MAX];
 
 
 /*===========================================================================*/
@@ -272,6 +275,12 @@ void set_systemkeys(int k_quit, int k_pause, int k_debug, int k_reset, int k_scr
 
 /*===========================================================================*/
 /*===========================================================================*/
+#ifdef __O2EM_PICO__
+void handle_key()
+{
+	o2em_poll_input();
+}
+#else
 void handle_key()
 {
 	#ifndef __O2EM_SDL__
@@ -458,6 +467,7 @@ void handle_key()
 	}
 
 }
+#endif /* !__O2EM_PICO__ */
 
 
 /*===========================================================================*/
@@ -467,6 +477,13 @@ Byte keyjoy(int jn)
 	Byte d;
 	d = 0xFF;
 	if ((jn >= 0) && (jn <= 1)){
+#ifdef __O2EM_PICO__
+		if (joy[jn].stick[0].axis[1].d1) d &= 0xFE; /* up */
+		if (joy[jn].stick[0].axis[1].d2) d &= 0xFB; /* down */
+		if (joy[jn].stick[0].axis[0].d1) d &= 0xF7; /* left */
+		if (joy[jn].stick[0].axis[0].d2) d &= 0xFD; /* right */
+		if (joy[jn].button[0].b)         d &= 0xEF; /* fire */
+#else
 		if (NeedsPoll)
 			poll_keyboard();
 		if (key[joykeys[jn][0]]) d &= 0xFE;
@@ -474,6 +491,7 @@ Byte keyjoy(int jn)
 		if (key[joykeys[jn][2]]) d &= 0xF7;
 		if (key[joykeys[jn][3]]) d &= 0xFD;
 		if (key[joykeys[jn][4]]) d &= 0xEF;
+#endif
 	}
 	return d;
 }
@@ -483,6 +501,15 @@ Byte keyjoy(int jn)
 /*===========================================================================*/
 int o2em_init_keyboard()
 {
+#ifdef __O2EM_PICO__
+	int i;
+	for (i = 0; i < 12; i++)
+		syskeys[i] = 0;
+	key_done = 0;
+	key_debug = 0;
+	NeedsPoll = 0;
+	return O2EM_SUCCESS;
+#else
 	int ret, i;
 	#ifdef __O2EM_DEBUG__
 	printf("%s\n", __func__);
@@ -499,6 +526,7 @@ int o2em_init_keyboard()
 	new_int = 1;
 	NeedsPoll = keyboard_needs_poll();
 	return O2EM_SUCCESS;
+#endif
 }
 
 

@@ -1,7 +1,7 @@
 #ifndef __VPP_H
 #define __VPP_H
 
-Byte *colplus;
+extern Byte *colplus;
 
 Byte read_PB(Byte p);
 void write_PB(Byte p, Byte val);
@@ -10,6 +10,6 @@ void vpp_write(Byte dat, ADDRESS adr);
 void vpp_finish_bmp(Byte *vmem, int offx, int offy, int w, int h, int totw, int toth);
 void init_vpp(void);
 void load_colplus(Byte *col);
-Byte vpp_mem[40][32][4];
+extern Byte vpp_mem[40][32][4];
 
 #endif

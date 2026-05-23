@@ -14,14 +14,17 @@
 
 
 #include <stdio.h>
+#include <string.h>
 #include "vmachine.h"
 #include "cpu.h"
 #include "voice.h"
 #include "o2em2.h"
-#ifndef __O2EM_SDL__
-#include "allegro.h"
-#else
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#elif defined(__O2EM_SDL__)
 #include "o2em_sdl.h"
+#else
+#include "allegro.h"
 #endif
 
 static int voice_bank = 0;

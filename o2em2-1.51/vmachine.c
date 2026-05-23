@@ -15,8 +15,11 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#ifndef __O2EM_PICO__
 #include <time.h>
 #include <errno.h>
+#endif
 #include "audio.h"
 #include "types.h"
 #include "cpu.h"
@@ -28,10 +31,12 @@
 #include "timefunc.h"
 #include "voice.h"
 #include "vmachine.h"
-#ifndef __O2EM_SDL__
-#include "allegro.h"
-#else
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#elif defined(__O2EM_SDL__)
 #include "o2em_sdl.h"
+#else
+#include "allegro.h"
 #endif
 
 static Byte x_latch,y_latch;
@@ -39,7 +44,22 @@ static int romlatch=0;
 static Byte line_count;
 static int fps = FPS_NTSC;
 
+#ifdef __O2EM_PICO__
+#define SNAPED_TOTAL ((MAXLINES+2*MAXSNAP) * 256 * 2)
+static Byte snapedlines_bits[SNAPED_TOTAL / 8];
+
+static inline int get_snaped(int pos, int reg, int t) {
+    int idx = (pos * 256 + reg) * 2 + t;
+    return (snapedlines_bits[idx >> 3] >> (idx & 7)) & 1;
+}
+
+static inline void set_snaped(int pos, int reg, int t) {
+    int idx = (pos * 256 + reg) * 2 + t;
+    snapedlines_bits[idx >> 3] |= (1 << (idx & 7));
+}
+#else
 static Byte snapedlines[MAXLINES+2*MAXSNAP][256][2];
+#endif
 
 int evblclk=EVBLCLK_NTSC;
 
@@ -63,7 +83,11 @@ int mxsnap=2;
 int sproff=0;/* sprite offset*/
 int tweakedaudio=0;
 
+#ifdef __O2EM_PICO__
+Byte (*rom_table)[4096] = NULL;
+#else
 Byte rom_table[8][4096];
+#endif
 
 Byte intRAM[64];
 Byte extRAM[256];
@@ -74,7 +98,9 @@ Byte AudioVector[MAXLINES];
 Byte *rom;
 Byte *megarom;
 
-/*int key2[128];*/
+int key2[128];
+int joykeystab[128];
+SAMPLE *voices[9][128];
 
 static unsigned int key_map_G7400[8][8]= {
 	{KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7},
@@ -129,6 +155,31 @@ void handle_vbl()
 
 /*============================================================================*/
 /*============================================================================*/
+void handle_evbl()
+{
+#ifdef __O2EM_PICO__
+	int i;
+	last_line = 0;
+	master_clk -= evblclk;
+	frame++;
+	if (!app_data.debug) {
+		finish_display();
+	}
+
+	for (i = 0; i < MAXLINES; i++) {
+		ColorVector[i] = (VDCwrite[0xA3] & 0x7f) | (p1 & 0x80);
+		AudioVector[i] = VDCwrite[0xAA];
+	}
+
+	if (key2vcnt++ > 10) {
+		key2vcnt = 0;
+		for (i = 0; i < KEY_MAX; i++)
+			key2[i] = 0;
+		dbstick1 = dbstick2 = 0;
+	}
+	mstate = 0;
+}
+#else
 void handle_evbl()
 {
 	static unsigned long last = 0;
@@ -206,9 +257,27 @@ void handle_evbl()
 	mstate = 0;
 
 }
+#endif /* !__O2EM_PICO__ */
 
 /*============================================================================*/
 /*============================================================================*/
+#ifdef __O2EM_PICO__
+void handle_evbll()
+{
+	int i;
+	for (i = 150; i < MAXLINES; i++) {
+		ColorVector[i] = (VDCwrite[0xA3] & 0x7f) | (p1 & 0x80);
+		AudioVector[i] = VDCwrite[0xAA];
+	}
+	if (key2vcnt++ > 10) {
+		key2vcnt = 0;
+		for (i = 0; i < KEY_MAX; i++)
+			key2[i] = 0;
+		dbstick1 = dbstick2 = 0;
+	}
+	mstate = 0;
+}
+#else
 void handle_evbll()
 {
 	static unsigned long last = 0;
@@ -216,19 +285,8 @@ void handle_evbll()
 	int i;
 	unsigned long d, f;
 	int antiloop = 0;
-	/*#ifndef ALLEGRO_DOS
-	yield_timeslice();
-	#endif*/
 	i = (15*app_data.speed/100);
 	rest_cnt = (rest_cnt+1)%(i<5?5:i);
-	/* why this ???
-	#ifdef ALLEGRO_WINDOWS
-	if (rest_cnt == 0)
-		rest(1);
-	#endif
-	*/
-
-	/******************* 150 */
 
 	for (i = 150; i < MAXLINES; i++) {
 		ColorVector[i] = (VDCwrite[0xA3] & 0x7f) | (p1 & 0x80);
@@ -246,13 +304,7 @@ void handle_evbll()
 		f = ((d + last - gettimeticks()) * 1000) / TICKSPERSEC;
 		if (f > 0) {
 			#ifdef ALLEGRO_WINDOWS
-				/*
-				f = f-(f%10);
-				if (f>5) rest(f-5);*/
 			#else
-				/*#ifndef ALLEGRO_DOS
-					yield_timeslice();
-				#endif*/
 			#endif
 		}
 		antiloop = 0;
@@ -266,6 +318,7 @@ void handle_evbll()
 	}
 	mstate = 0;
 }
+#endif
 
 /*============================================================================*/
 /*============================================================================*/
@@ -291,10 +344,14 @@ void init_system()
 	for (i = 0; i < MAXLINES; i++)
 		AudioVector[i] = ColorVector[i] = 0;
 
+#ifdef __O2EM_PICO__
+	memset(snapedlines_bits, 0, sizeof(snapedlines_bits));
+#else
 	for (i = 0; i < MAXLINES + 2 * MAXSNAP; i++)
 		for (j = 0; j < 256; j++)
 			for (k = 0; k < 2; k++)
 				snapedlines[i][j][k]=0;
+#endif
 
 	if (app_data.stick[0] == 2 || app_data.stick[1] == 2) {
 		#ifdef __O2EM_DEBUG__
@@ -793,10 +850,19 @@ int snapline(int pos, Byte reg, int t) {
 	int i;
 	if (pos < MAXLINES + MAXSNAP + MAXSNAP) {
 		for (i = 0; i < mxsnap; i++) {
+#ifdef __O2EM_PICO__
+			if (get_snaped(pos+MAXSNAP-i, reg, t)) return pos - i;
+			if (get_snaped(pos+MAXSNAP+i, reg, t)) return pos + i;
+#else
 			if (snapedlines[pos+MAXSNAP-i][reg][t]) return pos - i;
 			if (snapedlines[pos+MAXSNAP+i][reg][t]) return pos + i;
+#endif
 		}
+#ifdef __O2EM_PICO__
+		set_snaped(pos+MAXSNAP, reg, t);
+#else
 		snapedlines[pos+MAXSNAP][reg][t]=1;
+#endif
 	}
 	return pos;
 }
@@ -821,6 +887,10 @@ static void setvideomode(int t)
 	}
 }
 
+#ifdef __O2EM_PICO__
+int savestate(char *filename) { (void)filename; return -1; }
+int loadstate(char *filename) { (void)filename; return -1; }
+#else
 #define check_return_of_fxxx(ret, fn) if (ret == 0) { printf("%s:%d ERROR %s\n", __func__, __LINE__, strerror(errno)); fclose(fn); return -1;}
 
 /*============================================================================*/
@@ -992,3 +1062,4 @@ int loadstate(char *filename)
 	fclose(fn);
 	return O2EM_SUCCESS;
 }
+#endif /* !__O2EM_PICO__ */

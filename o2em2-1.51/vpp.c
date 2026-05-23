@@ -21,14 +21,18 @@
 #include "vdc.h"
 #include "vpp_cset.h"
 #include "vpp.h"
-#ifndef __O2EM_SDL__
-#include "allegro.h"
-#else
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#elif defined(__O2EM_SDL__)
 #include "o2em_sdl.h"
+#else
+#include "allegro.h"
 #endif
 
+#ifndef __O2EM_PICO__
 static void vpp_draw_char(int x, int y, Byte ch, Byte c0, Byte c1, Byte ext, Byte dw, Byte dh, Byte ul);
 static void vpp_update_screen(void);
+#endif
 
 
 static Byte LumReg = 0xff, TraReg = 0xff;
@@ -40,6 +44,9 @@ static int inc_curs = 1;
 static int slice = 0;
 static int vpp_y0 = 0;
 static Byte vpp_r = 0;
+Byte *colplus = NULL;
+Byte vpp_mem[40][32][4];
+
 Byte dchars[2][960];/* first index is an ext?*/
 static int frame_cnt = 0;
 static int blink_st = 0;
@@ -250,6 +257,17 @@ void vpp_write(Byte dat, ADDRESS adr)
 
 /*============================================================================*/
 /*============================================================================*/
+#ifdef __O2EM_PICO__
+void vpp_finish_bmp(Byte *vmem, int offx, int offy, int w, int h, int totw, int toth)
+{
+	(void)vmem; (void)offx; (void)offy; (void)w; (void)h; (void)totw; (void)toth;
+}
+static void vpp_draw_char(int x, int y, Byte ch, Byte c0, Byte c1, Byte ext, Byte dw, Byte dh, Byte ul)
+{
+	(void)x; (void)y; (void)ch; (void)c0; (void)c1; (void)ext; (void)dw; (void)dh; (void)ul;
+}
+static void vpp_update_screen(void) {}
+#else
 void vpp_finish_bmp(Byte *vmem, int offx, int offy, int w, int h, int totw, int toth)
 {
 	int i, x, y, t, c, nc, clrx, clry;
@@ -494,21 +512,25 @@ static void vpp_update_screen()
 
 	need_update = 0;
 }
+#endif /* !__O2EM_PICO__ */
 
 
 /*============================================================================*/
 /*============================================================================*/
 void load_colplus(Byte *col)
 {
-/*	printf("%s()\n", __func__);*/
-	if (col == NULL) {
-		printf("%s() error col is NULL\n", __func__);
-		return;
-	}
+	if (col == NULL) return;
+#ifdef __O2EM_PICO__
+	if (vppon && colplus)
+		memcpy(col, colplus, BMPW * BMPH);
+	else
+		memset(col, 0, BMPW * BMPH);
+#else
 	if (vppon)
 		memcpy(col, colplus, BMPW * BMPH);
 	else
 		memset(col, 0, BMPW * BMPH);
+#endif
 }
 
 /*============================================================================*/
@@ -516,27 +538,21 @@ void load_colplus(Byte *col)
 void init_vpp()
 {
 	int i, j, k;
+#ifdef __O2EM_PICO__
+	colplus = NULL;
+#else
 	#ifdef __O2EM_DEBUG__
 	printf("%s %p %p()\n", __func__, (void *)vppbmp, (void*)colplus);
 	#endif
 	if (!vppbmp) {
-		vppbmp = create_bitmap(320, 250);/* TODO put define value*/
-		#ifdef __O2EM_DEBUG__
-		printf("%s Allocate vppbmp %dx%d\n", __func__, BMPW, BMPH);
-		#endif
+		vppbmp = create_bitmap(320, 250);
 		if (vppbmp == NULL) {
 			fprintf(stderr, "Could not allocate memory for vppbmp.\n");
 			o2em_clean_quit(EXIT_FAILURE);
 		}
 	}
 	if (!colplus) {
-		#ifdef __O2EM_MEM_DEBUG__
-		printf("%s Allocate colplus %dx%d\n", __func__, BMPW, BMPH);
-		#endif
 		colplus = (Byte *)malloc(BMPW * BMPH);
-		#ifdef __O2EM_MEM_DEBUG__
-		printf("MALLOC/FREE DEBUG malloc colplus %d\n", BMPW * BMPH);
-		#endif
 		if (colplus == NULL) {
 			fprintf(stderr, "Could not allocate memory for colplus.\n");
 			o2em_clean_quit(EXIT_FAILURE);
@@ -550,6 +566,7 @@ void init_vpp()
 
 	clear(vppbmp);
 	memset(colplus, 0, BMPW * BMPH);
+#endif
 
 	LumReg = TraReg = 0xff;
 	vpp_cx = 0;

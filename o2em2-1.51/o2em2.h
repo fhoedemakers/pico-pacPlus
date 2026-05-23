@@ -1,6 +1,12 @@
 #ifndef __CONFIG_H
 #define __CONFIG_H
 
+#ifdef __O2EM_PICO__
+#ifndef __O2EM_RELEASE__
+#define __O2EM_RELEASE__
+#endif
+#endif
+
 #define O2EM_VERSION "1.51"
 #define RELEASE_DATE "(Apr/2013)"
 

@@ -22,6 +22,33 @@
 #include "vpp.h"
 #include "cpu.h"
 
+Byte acc;
+ADDRESS pc;
+long clk;
+Byte itimer;
+Byte reg_pnt;
+Byte timer_on;
+Byte count_on;
+Byte t_flag;
+Byte psw;
+Byte sp;
+Byte p1;
+Byte p2;
+Byte xirq_pend;
+Byte tirq_pend;
+ADDRESS lastpc;
+ADDRESS A11;
+ADDRESS A11ff;
+Byte bs;
+Byte f0;
+Byte f1;
+Byte ac;
+Byte cy;
+Byte xirq_en;
+Byte tirq_en;
+Byte irq_ex;
+int master_count;
+
 /*http://www.cpu-world.com/Arch/8048.html
  *
  * 00h - 07h bank0

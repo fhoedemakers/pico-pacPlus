@@ -11,13 +11,15 @@
  *   Score loading/saving by manopac
  */
 
-#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef __O2EM_PICO__
+#include <dirent.h>
 #include <ctype.h>
 #include <time.h>
 #include <errno.h>
+#endif
 #include "vmachine.h"
 #include "types.h"
 #include "score.h"
@@ -27,7 +29,7 @@
              Scoretype = abcd:
 	ramtype		a = 1: ext ram / 2: int ram
 	valuetype	b = 1: 1 Byte each Digit  / 2: 1/2 Byte each Digit
-	directíon	c = 1: higher value digits first /  2: low value digits first
+	directï¿½on	c = 1: higher value digits first /  2: low value digits first
 	count		d = number of digits
   --------------------------------------------------*/
 int get_score(int scoretype, int scoreaddress)
@@ -60,7 +62,7 @@ int get_score(int scoretype, int scoreaddress)
              Scoretype = abcd:
 	ramtype		a = 1: ext ram / 2: int ram
 	valuetype	b = 1: 1 Byte each Digit  / 2: 1/2 Byte each Digit
-	directíon	c = 1: higher value digits first /  2: low value digits first
+	directï¿½on	c = 1: higher value digits first /  2: low value digits first
 	count		d = number of digits
   --------------------------------------------------*/
 
@@ -96,6 +98,10 @@ void set_score(int scoretype, int scoreaddress, int score)
 -------------------------------------------------------*/
 void save_highscore(int highscore, char *scorefile)
 {
+#ifdef __O2EM_PICO__
+	(void)highscore;
+	(void)scorefile;
+#else
 	FILE *fn = NULL;
 
 	if (scorefile == NULL) {
@@ -117,6 +123,7 @@ void save_highscore(int highscore, char *scorefile)
 		o2em_clean_quit(EXIT_FAILURE);
 	}
 	fclose(fn);
+#endif
 }
 
 

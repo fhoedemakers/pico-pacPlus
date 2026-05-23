@@ -3,10 +3,12 @@
 
 #include "types.h"
 #include <stdint.h>
-#ifndef __O2EM_SDL__
-#include "allegro.h"
-#else
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#elif defined(__O2EM_SDL__)
 #include "o2em_sdl.h"
+#else
+#include "allegro.h"
 #endif
 
 #define LINECNT 21
@@ -33,7 +35,11 @@ extern int h_clk;   /* horizontal clock */
 extern Byte coltab[256];
 extern int mstate;
 
+#ifdef __O2EM_PICO__
+extern Byte (*rom_table)[4096];
+#else
 extern Byte rom_table[8][4096];
+#endif
 extern Byte intRAM[];
 extern Byte extRAM[];
 extern Byte extROM[];
@@ -44,11 +50,11 @@ extern Byte *rom;
 extern Byte *megarom;
 
 extern int frame;
-int key2[KEY_MAX];
+extern int key2[];
 extern int key2vcnt;
 extern unsigned long clk_counter;
 
-int joykeystab[KEY_MAX];
+extern int joykeystab[];
 
 extern int enahirq;
 extern int pendirq;
@@ -57,7 +63,7 @@ extern long regionoff;
 extern int sproff;
 extern int tweakedaudio;
 
-SAMPLE *voices[9][128];
+extern SAMPLE *voices[9][128];
 
 Byte read_P2();
 int snapline(int pos, Byte reg, int t);
@@ -75,7 +81,7 @@ void init_rams();
 void run();
 int savestate(char *filename);
 int loadstate(char *filename);
-void o2em_clean_quit();
+void o2em_clean_quit(int exitcode);
 
 /*#pragma pack(8)*/
 extern struct resource {

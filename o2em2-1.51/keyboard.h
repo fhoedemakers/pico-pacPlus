@@ -16,8 +16,7 @@ extern int NeedsPoll;
 extern Byte key_done;
 extern Byte key_debug;
 extern int joykeys[2][5];
-int syskeys[12];
-/*int syskeys[12] = {0,0,0,0,0,0,0,0,0,0,0,0};*/
+extern int syskeys[12];
 
 struct keyb{
 	int keybcode;

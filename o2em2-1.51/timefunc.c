@@ -14,7 +14,9 @@
 
 
 #include <time.h>
-#ifndef __O2EM_SDL__
+#ifdef __O2EM_PICO__
+#include "pico/stdlib.h"
+#elif !defined(__O2EM_SDL__)
 	#include "allegro.h"
 	#ifdef ALLEGRO_WINDOWS
 		#include "winalleg.h"
@@ -24,14 +26,17 @@
 		#include <sys/time.h>
 		#include <sys/times.h>
 	#endif
-#endif
-#ifdef __O2EM_SDL__
+#else
 	#include <SDL/SDL.h>
 #endif
 #include "timefunc.h"
 
 
-#ifndef __O2EM_SDL__
+#ifdef __O2EM_PICO__
+unsigned long gettimeticks() {
+    return (unsigned long)(time_us_64() / 100);
+}
+#elif !defined(__O2EM_SDL__)
 #ifdef ALLEGRO_WINDOWS
 static time_t first = 0;
 /*============================================================================*/

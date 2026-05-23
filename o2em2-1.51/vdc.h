@@ -1,10 +1,12 @@
 #ifndef __VDC_H
 #define __VDC_H
 
-#ifndef __O2EM_SDL__
-#include <allegro.h>
-#else
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#elif defined(__O2EM_SDL__)
 #include "o2em_sdl.h"
+#else
+#include <allegro.h>
 #endif
 
 #define BMPW 340
@@ -16,10 +18,10 @@ extern long clip_low;
 extern long clip_high;
 extern int show_fps;
 
-BITMAP *bmp;
-BITMAP *bmpcache;
-BITMAP *vppbmp;
-Byte *col;
+extern BITMAP *bmp;
+extern BITMAP *bmpcache;
+extern BITMAP *vppbmp;
+extern Byte *col;
 
 int init_display();
 void draw_display();

@@ -35,13 +35,18 @@
 #include "cpu.h"
 #include "vpp.h"
 #include "vdc.h"
-#ifndef __O2EM_SDL__
-#include "allegro.h"
-#else
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#elif defined(__O2EM_SDL__)
 #include "o2em_sdl.h"
+#else
+#include "allegro.h"
 #endif
 #include "audio.h"
 #include "voice.h"
+#ifdef __O2EM_PICO__
+#include "o2em_pico_callbacks.h"
+#endif
 
 
 #define COL_SP0   0x01
@@ -68,12 +73,19 @@ static long colortable[2][16]={
 };
 
 
+BITMAP *bmp = NULL;
+BITMAP *bmpcache = NULL;
+BITMAP *vppbmp = NULL;
+Byte *col = NULL;
+
 /* Collision buffer */
+#ifndef __O2EM_PICO__
 #ifndef __O2EM_SDL__
 PALETTE colors;
 PALETTE oldcol;
 #else
 SDL_Color colors[256];
+#endif
 #endif
 
 /* The pointer to the graphics buffer
@@ -84,7 +96,9 @@ SDL_Color colors[256];
  * */
 static Byte *vscreen = NULL;
 
+#ifndef __O2EM_PICO__
 static int cached_lines[MAXLINES];
+#endif
 
 Byte coltab[256];
 
@@ -92,6 +106,38 @@ long clip_low;
 long clip_high;
 
 int wsize;
+
+#ifdef __O2EM_PICO__
+#if HSTX
+static const unsigned short palette_o2[32] = {
+	0x0000, 0x04FA, 0x0263, 0x02FB, 0x6001, 0x6456, 0x4E02, 0x737C,
+	0x2DAD, 0x369F, 0x1FCF, 0x1BFF, 0x7D0A, 0x7E7F, 0x6EAB, 0x7FFF,
+	0x0000, 0x006D, 0x0121, 0x016D, 0x3000, 0x302B, 0x2501, 0x39AE,
+	0x14C6, 0x194F, 0x0DE7, 0x0DEF, 0x3C85, 0x3D2F, 0x3545, 0x3DEF
+};
+static const unsigned short palette_vpp[32] = {
+	0x0000, 0x0016, 0x02C0, 0x02D6, 0x5800, 0x5816, 0x5AC0, 0x5AD6,
+	0x2529, 0x253F, 0x27E9, 0x27FF, 0x7D29, 0x7D3F, 0x7FE9, 0x7FFF,
+	0x0000, 0x000B, 0x0160, 0x016B, 0x2C00, 0x2C0B, 0x2D60, 0x2D6B,
+	0x1084, 0x108F, 0x11E4, 0x11EF, 0x3C84, 0x3C8F, 0x3DE4, 0x3DEF
+};
+#else
+static const unsigned short palette_o2[32] = {
+	0x0000, 0x003D, 0x0091, 0x00BD, 0x0C00, 0x0C1B, 0x0981, 0x0EDE,
+	0x0566, 0x06AF, 0x03F7, 0x03FF, 0x0F45, 0x0F9F, 0x0DA5, 0x0FFF,
+	0x0000, 0x0016, 0x0040, 0x0056, 0x0600, 0x0605, 0x0440, 0x0767,
+	0x0233, 0x0357, 0x0173, 0x0177, 0x0722, 0x0747, 0x0652, 0x0777
+};
+static const unsigned short palette_vpp[32] = {
+	0x0000, 0x000B, 0x00B0, 0x00BB, 0x0B00, 0x0B0B, 0x0BB0, 0x0BBB,
+	0x0444, 0x044F, 0x04F4, 0x04FF, 0x0F44, 0x0F4F, 0x0FF4, 0x0FFF,
+	0x0000, 0x0005, 0x0050, 0x0055, 0x0500, 0x0505, 0x0550, 0x0555,
+	0x0222, 0x0227, 0x0272, 0x0277, 0x0722, 0x0727, 0x0772, 0x0777
+};
+#endif
+const unsigned short *palette_lut = palette_o2;
+int show_fps = 0;
+#endif
 
 static void draw_char(Byte ypos, Byte xpos, Byte chr, Byte col);
 static void draw_quad(Byte ypos, Byte xpos, Byte cp0l, Byte cp0h, Byte cp1l, Byte cp1h, Byte cp2l, Byte cp2h, Byte cp3l, Byte cp3h);
@@ -149,19 +195,19 @@ void draw_region(){
 void create_cmap()
 {
 	int i;
+#ifdef __O2EM_PICO__
+	palette_lut = app_data.vpp ? palette_vpp : palette_o2;
+#else
 	#ifdef __O2EM_DEBUG__
 	printf("%s\n", __func__);
 	#endif
-	/* Initialise parts of the colors array */
 	for (i = 0; i < 16; i++) {
-		/* Use the color values from the color table */
 		colors[i+32].r = colors[i].r = (colortable[app_data.vpp?1:0][i] & 0xff0000) >> 18;
 		colors[i+32].g = colors[i].g = (colortable[app_data.vpp?1:0][i] & 0x00ff00) >> 10;
 		colors[i+32].b = colors[i].b = (colortable[app_data.vpp?1:0][i] & 0x0000ff) >> 2;
 	}
 
 	for (i = 16; i < 32; i++) {
-		/* Half-bright colors for the 50% scanlines */
 		colors[i+32].r = colors[i].r = colors[i-16].r/2;
 		colors[i+32].g = colors[i].g = colors[i-16].g/2;
 		colors[i+32].b = colors[i].b = colors[i-16].b/2;
@@ -176,6 +222,7 @@ void create_cmap()
 		colors[i].b *= 4;
 	}
 	#endif
+#endif
 }
 
 /*============================================================================*/
@@ -288,31 +335,14 @@ void clearscr()
 void mputvid(unsigned int ad, unsigned int len, Byte d, Byte c)
 {
 	unsigned int i;
-	if (len >= sizeof(coltab)) {
-		printf("%s ERROR %u > %lu\n", __func__, len, sizeof(coltab));
-		return ;
-	}
-	if (c >= sizeof(coltab)) {
-		printf("%s ERROR %u > %lu\n", __func__, c, sizeof(coltab));
-		return ;
-	}
+	if (len >= sizeof(coltab)) return;
+	if (c >= sizeof(coltab)) return;
 	if ((ad > (unsigned long)clip_low) && (ad < (unsigned long)clip_high)) {
-		if (((len & 3) == 0) && (sizeof(unsigned long) == 4)) {/* TODO unsigned long is 8 on 64bits, this code will not work*/
-			unsigned long dddd = (((unsigned long)d) & 0xff) | ((((unsigned long)d) & 0xff) << 8) | ((((unsigned long)d) & 0xff) << 16) | ((((unsigned long)d) & 0xff) << 24);
-			unsigned long cccc = (((unsigned long)c) & 0xff) | ((((unsigned long)c) & 0xff) << 8) | ((((unsigned long)c) & 0xff) << 16) | ((((unsigned long)c) & 0xff) << 24);
-			for (i = 0; i < len>>2; i++) {
-				*((unsigned long*)(vscreen + ad)) = dddd;
-				cccc |= *((unsigned long*)(col+ad));
-				*((unsigned long*)(col+ad)) = cccc;
-				coltab[c] |= ((cccc | (cccc >> 8) | (cccc >> 16) | (cccc >> 24)) & 0xff);
-				ad += 4;
-			}
-		} else {
-			for (i = 0; i < len; i++) {
-				vscreen[ad] = d;
-				col[ad] |= c;
-				coltab[c] |= col[ad++];
-			}
+		for (i = 0; i < len; i++) {
+			if (ad >= BMPW * BMPH) break;
+			vscreen[ad] = d;
+			col[ad] |= c;
+			coltab[c] |= col[ad++];
 		}
 	}
 }
@@ -391,7 +421,7 @@ static void draw_grid()
 
 /*============================================================================*/
 /*============================================================================*/
-#ifndef __O2EM_SDL__
+#if !defined(__O2EM_SDL__) && !defined(__O2EM_PICO__)
 unsigned char *get_raw_pixel_line(BITMAP *pSurface, int y) {
 	if (pSurface == NULL) {
 		fprintf(stderr, "%s Error surface is NULL\n", __func__);
@@ -410,6 +440,12 @@ unsigned char *get_raw_pixel_line(BITMAP *pSurface, int y) {
 /*============================================================================*/
 void finish_display()
 {
+#ifdef __O2EM_PICO__
+	if (app_data.vpp)
+		vpp_finish_bmp(vscreen, 9, 5, BMPW - 9, BMPH - 5, BMPW, BMPH);
+	o2em_render_frame(vscreen, col, BMPW, BMPH, palette_lut, app_data.vpp);
+	return;
+#else
 	int x, y, sn;
 	static int cache_counter = 0;
 	static long index = 0;
@@ -419,7 +455,6 @@ void finish_display()
 	SDL_Rect dest_rect;
 	#endif
 
-	/* According to what I have understand, VPP graphics are always behind normal graphics */
 	vpp_finish_bmp(vscreen, 9, 5, BMPW - 9, BMPH - 5, bmp->w, bmp->h);
 	#ifdef __O2EM_SDL__
 	SDL_SaveBMP(vppbmp, "testvpp.bmp");
@@ -507,6 +542,7 @@ void finish_display()
 	/*SDL_SaveBMP(screen, "bmpscreen.bmp");*/
 	#endif
 	release_screen();
+#endif /* !__O2EM_PICO__ */
 }
 
 
@@ -842,7 +878,16 @@ void display_msg(char *msg, int waits)
 
 /*============================================================================*/
 /*============================================================================*/
+extern void *frens_f_malloc(size_t size);
 int init_display() {
+#ifdef __O2EM_PICO__
+	create_cmap();
+	vscreen = (Byte *)frens_f_malloc(BMPW * BMPH);
+	col = (Byte *)frens_f_malloc(BMPW * BMPH);
+	memset(vscreen, 0, BMPW * BMPH);
+	memset(col, 0, BMPW * BMPH);
+	return O2EM_SUCCESS;
+#else
 	#ifdef __O2EM_DEBUG__
 	printf("%s\n", __func__);
 	#endif
@@ -861,7 +906,6 @@ int init_display() {
 	}
 	bmpcache = create_bitmap(BMPW, BMPH);
 	if (bmpcache == NULL) {
-		/*TODO deallocate bmp*/
 		fprintf(stderr, "Could not allocate memory for screen buffer.\n");
 		return O2EM_FAILURE;
 	}
@@ -884,14 +928,13 @@ int init_display() {
 	if (!app_data.debug) {
 		grmode();
 	}
-/*    set_window_close_button(TRUE);*/
-	/*set_window_close_hook(window_close_hook);*/
 	#ifndef __O2EM_SDL__
 	set_close_button_callback(window_close_hook);
 	#else
 	printf("DEBUG %p %p %d %d\n", (void*) vscreen, (void*) bmp->pixels, screen->pitch, bmp->pitch);
 	#endif
 	return O2EM_SUCCESS;
+#endif
 }
 
 /*============================================================================*/

@@ -15,8 +15,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
 #include <string.h>
+#ifndef __O2EM_PICO__
+#include <errno.h>
+#else
+#include "ff.h"
+#endif
 #include "crc32.h"
 
 
@@ -99,6 +103,41 @@ uint32_t crc32_buf(const void *buf, long len)
 }
 
 
+#ifdef __O2EM_PICO__
+uint32_t crc32_file(const char *filename)
+{
+	uint32_t crc = ~0;
+	FIL *fil;
+	UINT br;
+	unsigned char *buf;
+	fil = frens_f_malloc(sizeof(FIL));
+	if (fil == NULL) {
+		printf("crc32_file: memory allocation error\n");
+		return 0;
+	}
+	if (filename == NULL) return (uint32_t)-1;
+	if (f_open(fil, filename, FA_READ) != FR_OK) {
+		printf("crc32_file: open error %s\n", filename);
+		frens_f_free(fil);
+		return 0;
+	}
+	buf = frens_f_malloc(256);
+	if (buf == NULL) {
+		printf("crc32_file: memory allocation error\n");
+		f_close(fil);
+		frens_f_free(fil);
+		return 0;
+	}
+	while (f_read(fil, buf, 256, &br) == FR_OK && br > 0) {
+		for (UINT i = 0; i < br; i++)
+			crc = (crc >> 8) ^ crc32tab[(crc ^ buf[i]) & 0xff];
+	}
+	frens_f_free(buf);
+	f_close(fil);
+	frens_f_free(fil);
+	return ~crc;
+}
+#else
 uint32_t crc32_file(const char *filename)
 {
 	uint32_t crc = ~0;
@@ -116,4 +155,5 @@ uint32_t crc32_file(const char *filename)
 	fclose(f);
 	return ~crc;
 }
+#endif
 

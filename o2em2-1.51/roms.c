@@ -11,21 +11,106 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#ifndef __O2EM_PICO__
 #include <errno.h>
 #include <unistd.h>
-#include <stdlib.h>
 #include <dirent.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#endif
 #include "o2em2.h"
 #include "crc32.h"
 #include "roms.h"
 #include "bios.h"
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 
-/*===========================================================================*/
-/*===========================================================================*/
-/* TODO missing open with full path and without .bin and with roms/xxxx */
+#ifdef __O2EM_PICO__
+extern unsigned long ROM_FILE_SIZE;
+
+int search_for_rom(char *pathx, char *rom_searched, char *full_path_to_rom) {
+	return O2EM_SUCCESS;
+}
+
+int identify_rom(char *filename) {
+	return O2EM_SUCCESS;
+}
+
+int identify_all_roms(char *pathx) {
+	return O2EM_SUCCESS;
+}
+
+long filesize(FILE *stream) {
+	return 0;
+}
+
+int load_cart_from_memory(const unsigned char *rom_data, long rom_size, struct resource *app_data)
+{
+	long l = rom_size;
+	int i, nb;
+
+	if (app_data == NULL || rom_data == NULL) return O2EM_FAILURE;
+
+	app_data->crc = crc32_buf(rom_data, l);
+	printf("ROM CRC: %08lX  Size: %ldK\n", (unsigned long)app_data->crc, l / 1024);
+
+	if ((l % 1024) != 0) {
+		printf("Error: invalid ROM size %ld\n", l);
+		return O2EM_FAILURE;
+	}
+
+	if ((l == 32768) || (l == 65536) || (l == 131072) || (l == 262144) || (l == 524288) || (l == 1048576)) {
+		app_data->megaxrom = 1;
+		app_data->bank = 1;
+		megarom = (Byte *)rom_data;
+		printf("MegaCart %ldK\n", l / 1024);
+		nb = 1;
+	} else if (((l % 3072) == 0)) {
+		app_data->three_k = 1;
+		nb = l / 3072;
+		for (i = nb - 1; i >= 0; i--)
+			memcpy(&rom_table[i][1024], rom_data + (nb - 1 - i) * 3072, 3072);
+		printf("%dK (3K banks)\n", nb * 3);
+	} else {
+		nb = l / 2048;
+		if ((nb == 2) && (app_data->exrom)) {
+			memcpy(&extROM[0], rom_data, 1024);
+			memcpy(&rom_table[0][1024], rom_data + 1024, 3072);
+			printf("3K EXROM\n");
+		} else {
+			for (i = nb - 1; i >= 0; i--) {
+				memcpy(&rom_table[i][1024], rom_data + (nb - 1 - i) * 2048, 2048);
+				memcpy(&rom_table[i][3072], &rom_table[i][2048], 1024);
+			}
+			printf("%dK\n", nb * 2);
+		}
+	}
+
+	if (nb == 1)
+		app_data->bank = 1;
+	else if (nb == 2)
+		app_data->bank = app_data->exrom ? 1 : 2;
+	else if (nb == 4)
+		app_data->bank = 3;
+	else
+		app_data->bank = 4;
+
+	if ((rom_table[nb - 1][1024 + 12] == 'O') &&
+	    (rom_table[nb - 1][1024 + 13] == 'P') && (rom_table[nb - 1][1024 + 14] == 'N') && (rom_table[nb - 1][1024 + 15] == 'B')) {
+		app_data->openb = 1;
+		printf("  openb ROM\n");
+	}
+	printf("  %d bank(s)\n", app_data->bank);
+	return O2EM_SUCCESS;
+}
+
+int load_cart(char *file, struct resource *app_data)
+{
+	return O2EM_FAILURE;
+}
+
+#else /* !__O2EM_PICO__ */
+
 int search_for_rom(char *pathx, char *rom_searched, char *full_path_to_rom)
 {
 	DIR *dir_p;
@@ -338,3 +423,4 @@ int identify_all_roms(char *pathx)
 	closedir(dir_p);
 	return O2EM_SUCCESS;
 }
+#endif /* !__O2EM_PICO__ */

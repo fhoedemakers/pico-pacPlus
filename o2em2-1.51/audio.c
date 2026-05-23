@@ -21,11 +21,14 @@
 #include "o2em2.h"
 #include "vmachine.h"
 #include "audio.h"
-#ifndef __O2EM_SDL__
-#include "allegro.h"
-#else
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#include "o2em_pico_callbacks.h"
+#elif defined(__O2EM_SDL__)
 #include "o2em_sdl.h"
 #include <errno.h>
+#else
+#include "allegro.h"
 #endif
 
 #define SAMPLE_RATE 44100
@@ -99,6 +102,13 @@ void audio_process(unsigned char *buffer)
 /*===========================================================================*/
 void update_audio()
 {
+#ifdef __O2EM_PICO__
+	static unsigned char audio_buf[SOUND_BUFFER_LEN];
+	if (app_data.sound_en) {
+		audio_process(audio_buf);
+		o2em_sound_output(audio_buf, SOUND_BUFFER_LEN);
+	}
+#else
 	unsigned char *p = NULL;
 	if (app_data.sound_en) {
 		p = (unsigned char *)get_audio_stream_buffer(stream);
@@ -110,12 +120,18 @@ void update_audio()
 			free_audio_stream_buffer(stream);
 		}
 	}
+#endif
 }
 
 /*===========================================================================*/
 /*===========================================================================*/
 int o2em_init_audio()
 {
+#ifdef __O2EM_PICO__
+	sound_IRQ = 0;
+	sndlog = NULL;
+	return O2EM_SUCCESS;
+#else
 	int i;
 
 	sound_IRQ = 0;
@@ -151,6 +167,7 @@ int o2em_init_audio()
 
 	sndlog = NULL;
 	return O2EM_SUCCESS;
+#endif
 }
 
 /*===========================================================================*/
