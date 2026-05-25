@@ -11,6 +11,13 @@
 #include "allegro.h"
 #endif
 
+#ifndef O2EM_HOT_FUNC
+/* No-op on non-Pico builds (SDL/Allegro etc.) where there is no XIP
+ * stall to mitigate. On Pico, o2em_pico.h defines this to expand to
+ * __not_in_flash_func to place the function in SRAM. */
+#define O2EM_HOT_FUNC(name) name
+#endif
+
 #define LINECNT 21
 #define MAXLINES 500
 #define MAXSNAP 50

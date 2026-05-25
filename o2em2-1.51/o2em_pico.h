@@ -12,6 +12,14 @@
 #endif
 #endif
 
+/* Hot-path attribute. Placing the most frequently-executed emulator
+ * code (CPU emulation, scanline drawing, VBL handlers) in SRAM rather
+ * than flash eliminates XIP cache-miss stalls. Those stalls can delay
+ * the HSTX DMA IRQ enough to underrun the FIFO and lose the HDMI
+ * signal mid-game. Compare pico-infonesPlus, which marks all of its
+ * hot paths the same way and never loses signal. */
+#define O2EM_HOT_FUNC(name) __not_in_flash_func(name)
+
 #define KEY_A       0
 #define KEY_B       1
 #define KEY_C       2

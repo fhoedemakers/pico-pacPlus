@@ -125,14 +125,20 @@ static bool rom_table_is_flash = false;
 static void init_rom_table()
 {
     if (rom_table) return;
-    rom_table = (Byte (*)[4096])Frens::f_malloc(8 * 4096);
+    // Allocate in SRAM (plain malloc), NOT Frens::f_malloc which would
+    // route to PSRAM on PSRAM-enabled boards. cpu_exec() does ROM(pc)
+    // on every emulated opcode - millions of accesses per second - and
+    // routing those through PSRAM creates enough QMI/AHB bus pressure
+    // to delay the HSTX DMA IRQ and drop the HDMI signal in CPU-heavy
+    // games (e.g. Demon Attack). 32KB SRAM cost is well worth it.
+    rom_table = (Byte (*)[4096])malloc(8 * 4096);
     memset(rom_table, 0, 8 * 4096);
 }
 
 static void free_rom_table()
 {
     if (rom_table && !rom_table_is_flash) {
-        Frens::f_free(rom_table);
+        free(rom_table);
     }
     rom_table = NULL;
     rom_table_is_flash = false;
@@ -174,14 +180,20 @@ static void init_app_data()
     strcpy(app_data.biosdir, "/bios");
 }
 
-extern "C" void o2em_render_frame(Byte *vscreen, Byte *col, int width, int height,
+// Convert the emulator's 8-bit indexed vscreen to the active display
+// driver's pixel format and write it in one shot at end of frame.
+//
+// Drawing happens against vscreen during emulator execution; this function
+// does a single bulk conversion so the display FB is updated atomically.
+// That avoids the in-frame "clear-to-bg then redraw-sprite" flicker that
+// would happen if the emulator wrote directly into the live HSTX FB.
+extern "C" void __not_in_flash_func(o2em_render_frame)(Byte *vscreen, Byte *col, int width, int height,
                                    const unsigned short *palette_lut, int vpp_enabled)
 {
     (void)col;
     (void)vpp_enabled;
+    (void)height;
 
-    int src_x = 7;
-    int src_y = 2;
     int vis_w = WNDW; // 320
     int vis_h = WNDH; // 240
 
@@ -189,11 +201,9 @@ extern "C" void o2em_render_frame(Byte *vscreen, Byte *col, int width, int heigh
     for (int y = 0; y < vis_h; y++)
     {
         WORD *dst = hstx_getlineFromFramebuffer(y);
-        Byte *src = vscreen + (src_y + y) * width + src_x;
+        Byte *src = vscreen + y * width;
         for (int x = 0; x < vis_w; x++)
-        {
             dst[x] = palette_lut[src[x] & 0x1f];
-        }
     }
 #else
 #if FRAMEBUFFERISPOSSIBLE
@@ -202,11 +212,9 @@ extern "C" void o2em_render_frame(Byte *vscreen, Byte *col, int width, int heigh
         for (int y = 0; y < vis_h; y++)
         {
             WORD *dst = &Frens::framebuffer[y * 320];
-            Byte *src = vscreen + (src_y + y) * width + src_x;
+            Byte *src = vscreen + y * width;
             for (int x = 0; x < vis_w; x++)
-            {
                 dst[x] = palette_lut[src[x] & 0x1f];
-            }
         }
     }
     else
@@ -216,43 +224,26 @@ extern "C" void o2em_render_frame(Byte *vscreen, Byte *col, int width, int heigh
         {
             auto b = dvi_->getLineBuffer();
             WORD *dst = b->data();
-            Byte *src = vscreen + (src_y + y) * width + src_x;
+            Byte *src = vscreen + y * width;
             int max_w = b->size() < (size_t)vis_w ? b->size() : vis_w;
             for (int x = 0; x < max_w; x++)
-            {
                 dst[x] = palette_lut[src[x] & 0x1f];
-            }
-            if (settings.flags.displayFrameRate && y >= 8 && y < 16)
-            {
-                WORD fgc = palette_lut[15]; // white
-                WORD bgc = palette_lut[0];  // black
-                char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
-                int rowInChar = y - 8;
-                WORD *fpsBuffer = dst + 4;
-                for (int i = 0; i < 2; i++)
-                {
-                    char fontSlice = getcharslicefrom8x8font(fpsString[i], rowInChar);
-                    for (int bit = 0; bit < 8; bit++)
-                    {
-                        *fpsBuffer++ = (fontSlice & 1) ? fgc : bgc;
-                        fontSlice >>= 1;
-                    }
-                }
-            }
             dvi_->setLineBuffer(y, b);
         }
     }
 #endif
 
+    // FPS overlay (writes directly into the display FB; brief tearing
+    // window is acceptable for a few small digits at top-left).
     if (settings.flags.displayFrameRate)
     {
         uint32_t tick_us = Frens::time_us() - start_tick_us;
         fps = (1000000 - 1) / tick_us + 1;
         start_tick_us = Frens::time_us();
-#if HSTX
-        WORD fgc = palette_lut[15]; // white
-        WORD bgc = palette_lut[0];  // black
+        WORD fgc = palette_lut[15];
+        WORD bgc = palette_lut[0];
         char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
+#if HSTX
         for (int y = 8; y < 16; y++)
         {
             WORD *fpsBuffer = hstx_getlineFromFramebuffer(y) + 4;
@@ -270,9 +261,6 @@ extern "C" void o2em_render_frame(Byte *vscreen, Byte *col, int width, int heigh
 #elif FRAMEBUFFERISPOSSIBLE
         if (Frens::isFrameBufferUsed())
         {
-            WORD fgc = palette_lut[15];
-            WORD bgc = palette_lut[0];
-            char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
             for (int y = 8; y < 16; y++)
             {
                 WORD *fpsBuffer = &Frens::framebuffer[y * 320 + 4];
@@ -288,6 +276,8 @@ extern "C" void o2em_render_frame(Byte *vscreen, Byte *col, int width, int heigh
                 }
             }
         }
+#else
+        (void)fgc; (void)bgc; (void)fpsString;
 #endif
     }
 }
@@ -370,6 +360,61 @@ extern "C" void o2em_sound_output(unsigned char *buffer, int len)
 #endif
 }
 
+// Translate a HID usage code (HID_KEY_*) into an O2 KEY_* index, or -1 if
+// unmapped. Covers the keys the O2 / G7400 keyboard exposes via the
+// key_map_G7400[][] matrix in vmachine.c.
+static int hidKeyToO2Key(uint8_t hid)
+{
+    switch (hid) {
+        case HID_KEY_A: return KEY_A;
+        case HID_KEY_B: return KEY_B;
+        case HID_KEY_C: return KEY_C;
+        case HID_KEY_D: return KEY_D;
+        case HID_KEY_E: return KEY_E;
+        case HID_KEY_F: return KEY_F;
+        case HID_KEY_G: return KEY_G;
+        case HID_KEY_H: return KEY_H;
+        case HID_KEY_I: return KEY_I;
+        case HID_KEY_J: return KEY_J;
+        case HID_KEY_K: return KEY_K;
+        case HID_KEY_L: return KEY_L;
+        case HID_KEY_M: return KEY_M;
+        case HID_KEY_N: return KEY_N;
+        case HID_KEY_O: return KEY_O;
+        case HID_KEY_P: return KEY_P;
+        case HID_KEY_Q: return KEY_Q;
+        case HID_KEY_R: return KEY_R;
+        case HID_KEY_S: return KEY_S;
+        case HID_KEY_T: return KEY_T;
+        case HID_KEY_U: return KEY_U;
+        case HID_KEY_V: return KEY_V;
+        case HID_KEY_W: return KEY_W;
+        case HID_KEY_X: return KEY_X;
+        case HID_KEY_Y: return KEY_Y;
+        case HID_KEY_Z: return KEY_Z;
+        case HID_KEY_1: return KEY_1;
+        case HID_KEY_2: return KEY_2;
+        case HID_KEY_3: return KEY_3;
+        case HID_KEY_4: return KEY_4;
+        case HID_KEY_5: return KEY_5;
+        case HID_KEY_6: return KEY_6;
+        case HID_KEY_7: return KEY_7;
+        case HID_KEY_8: return KEY_8;
+        case HID_KEY_9: return KEY_9;
+        case HID_KEY_0: return KEY_0;
+        case HID_KEY_SPACE: return KEY_SPACE;
+        case HID_KEY_RETURN: return KEY_ENTER;
+        case HID_KEY_MINUS: return KEY_MINUS;
+        case HID_KEY_EQUAL: return KEY_EQUALS;
+        case HID_KEY_PERIOD: return KEY_STOP;
+        case HID_KEY_SLASH: return KEY_SLASH;
+        case HID_KEY_KEYPAD_ADD: return KEY_PLUS_PAD;
+        case HID_KEY_KEYPAD_DIVIDE: return KEY_SLASH_PAD;
+        case HID_KEY_KEYPAD_MULTIPLY: return KEY_ASTERISK;
+        default: return -1;
+    }
+}
+
 extern "C" void o2em_poll_input()
 {
     static constexpr int LEFT = 1 << 6;
@@ -380,6 +425,16 @@ extern "C" void o2em_poll_input()
     static constexpr int START = 1 << 3;
     static constexpr int A = 1 << 0;
     static constexpr int B = 1 << 1;
+
+    // Update the O2 emulator's key[] array from the current USB HID keyboard
+    // state. The O2 keyboard is shared - not per-player - so do this once.
+    memset(key, 0, KEY_MAX);
+    const auto &kb = io::getCurrentKeyboardState();
+    for (int k = 0; k < 6; k++) {
+        int o2key = hidKeyToO2Key(kb.keycode[k]);
+        if (o2key >= 0 && o2key < KEY_MAX)
+            key[o2key] = 1;
+    }
 
     bool usbConnected = false;
     for (int i = 0; i < 2; ++i)
@@ -485,6 +540,22 @@ extern "C" void o2em_poll_input()
             }
         }
         prevButtons[i] = v;
+    }
+
+    // The O2 console had two joystick ports and games picked either port
+    // freely - e.g. K.C. Munchkin reads port 1, Alien Invaders reads
+    // port 2 (in_bus() in vmachine.c routes si==1 -> joy[0], else -> joy[1]).
+    // When only one USB gamepad is connected (the common case), mirror
+    // player-0 input into joy[1] so port-2-using games work with the
+    // single controller. If a second gamepad IS connected, leave joy[1]
+    // alone so true 2-player games still work.
+    if (!io::getCurrentGamePadState(1).isConnected())
+    {
+        joy[1].stick[0].axis[0].d1 = joy[0].stick[0].axis[0].d1;
+        joy[1].stick[0].axis[0].d2 = joy[0].stick[0].axis[0].d2;
+        joy[1].stick[0].axis[1].d1 = joy[0].stick[0].axis[1].d1;
+        joy[1].stick[0].axis[1].d2 = joy[0].stick[0].axis[1].d2;
+        joy[1].button[0].b = joy[0].button[0].b;
     }
 }
 
@@ -712,6 +783,11 @@ int main()
             cpu_exec();
             processPerFrame();
         }
+
+        // Free emulator graphics buffers (vscreen, col) so the next
+        // game can re-allocate them. Without this we leak ~152KB per
+        // game switch and the heap runs dry within a few menu cycles.
+        close_display();
 
         key_done = 0;
         selectedRom[0] = 0;

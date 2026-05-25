@@ -9,8 +9,14 @@
 #include <allegro.h>
 #endif
 
+#ifdef __O2EM_PICO__
+#include <stdint.h>
+#define BMPW 320
+#define BMPH 240
+#else
 #define BMPW 340
 #define BMPH 250
+#endif
 #define WNDW 320
 #define WNDH 240
 extern Byte coltab[];

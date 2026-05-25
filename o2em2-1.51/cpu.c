@@ -88,7 +88,7 @@ void init_cpu()
  *
  *
  * */
-void ext_IRQ()
+void O2EM_HOT_FUNC(ext_IRQ)()
 {
 	int_clk = 5; /* length of pulse on /INT */
 	if (xirq_en && !irq_ex) {
@@ -109,7 +109,7 @@ void ext_IRQ()
 /***
  *
  * */
-void tim_IRQ()
+void O2EM_HOT_FUNC(tim_IRQ)()
 {
 	if (tirq_en && !irq_ex) {
 		irq_ex=2;
@@ -136,7 +136,7 @@ void make_psw_debug()
 /***
  *
  * */
-void cpu_exec()
+void O2EM_HOT_FUNC(cpu_exec)()
 {
 	Byte op;
 	ADDRESS adr;

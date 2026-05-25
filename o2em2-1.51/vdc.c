@@ -46,6 +46,8 @@
 #include "voice.h"
 #ifdef __O2EM_PICO__
 #include "o2em_pico_callbacks.h"
+extern void *frens_f_malloc(size_t size);
+extern void frens_f_free(void *ptr);
 #endif
 
 
@@ -60,6 +62,18 @@
 
 #define X_START		8
 #define Y_START		24
+
+/* X-offset for visible content inside vscreen.
+ * SDL/Allegro: 10-pixel hidden left border (in doubled coords: 20).
+ * Pico: vscreen IS the display framebuffer. We keep a small X offset
+ * so that sprite/char positioning matches the previous Pico build,
+ * which had +20 in this constant and then extracted the display
+ * window starting at src_x=7 (net display X for hw xpos=8 was 13). */
+#ifdef __O2EM_PICO__
+#define BMP_XOFFS	13
+#else
+#define BMP_XOFFS	20
+#endif
 
 
 static long colortable[2][16]={
@@ -88,12 +102,15 @@ SDL_Color colors[256];
 #endif
 #endif
 
-/* The pointer to the graphics buffer
- * The 10 first and last columns is hide
- * Same for the 5 first and last lines
- * So it is why output is 320 * 240 and BMW=340 and BMPH=250
- *
- * */
+/* The pointer to the graphics buffer.
+ * Pico build: 8-bit indexed color, BMPW*BMPH (320*240) allocated in
+ * regular heap (SRAM). Deliberately NOT in PSRAM: per-pixel writes
+ * during draw_display and the end-of-frame bulk conversion would be
+ * 5-10x slower over PSRAM, dropping fps. The 10/5 hidden-border
+ * layout used by SDL/Allegro is gone; per-pixel writes near the edges
+ * are clipped by mputvid()'s ad-bounds check.
+ * SDL/Allegro build: 8-bit indexed, owned by bmp->dat / bmp->pixels.
+ */
 static Byte *vscreen = NULL;
 
 #ifndef __O2EM_PICO__
@@ -146,7 +163,7 @@ void mputvid(unsigned int ad, unsigned int len, Byte d, Byte c);
 
 /*============================================================================*/
 /*============================================================================*/
-void draw_region(){
+void O2EM_HOT_FUNC(draw_region)(){
 	int i;
 
 	if (regionoff == 0xffff)
@@ -184,6 +201,7 @@ void draw_region(){
 		clip_high = BMPW * BMPH;
 	if (clip_low < 0)
 		clip_low = 0;
+
 	if (clip_low < clip_high)
 		draw_display();
 	last_line = i;
@@ -332,7 +350,7 @@ void clearscr()
 /* d is color, what a good variable name!!
  * c is COL_HGRID(0x20 or COL_CHAR(0x80) or 8
  * */
-void mputvid(unsigned int ad, unsigned int len, Byte d, Byte c)
+void O2EM_HOT_FUNC(mputvid)(unsigned int ad, unsigned int len, Byte d, Byte c)
 {
 	unsigned int i;
 	if (len >= sizeof(coltab)) return;
@@ -349,7 +367,7 @@ void mputvid(unsigned int ad, unsigned int len, Byte d, Byte c)
 
 /*============================================================================*/
 /*============================================================================*/
-static void draw_grid()
+static void O2EM_HOT_FUNC(draw_grid)()
 {
 	unsigned int pnt, pn1;
 	Byte mask, d;
@@ -360,7 +378,7 @@ static void draw_grid()
 		for(j = 0; j < 9; j++) {
 			pnt = (((j * 24) + 24) * BMPW);
 			for (i = 0; i < 10; i++) {
-				pn1 = pnt + (i * 32) + 20;
+				pn1 = pnt + (i * 32) + BMP_XOFFS;
 				color = ColorVector[j*24+24];
 				mputvid(pn1, 4, (color & 0x07) | ((color & 0x40) >> 3) | (color & 0x80 ? 0 : 8), COL_HGRID);
 				color = ColorVector[j*24+25];
@@ -375,7 +393,7 @@ static void draw_grid()
 	for(j=0; j<9; j++) {
 		pnt = (((j*24)+24) * BMPW);
 		for (i=0; i<9; i++) {
-			pn1 = pnt + (i * 32) + 20;
+			pn1 = pnt + (i * 32) + BMP_XOFFS;
 			if ((pn1+BMPW*3 >= (unsigned long)clip_low) && (pn1 <= (unsigned long)clip_high)) {
 				d=VDCwrite[0xC0 + i];
 				if (j == 8) {
@@ -403,7 +421,7 @@ static void draw_grid()
 		mask = 0x01;
 		d = VDCwrite[0xE0 + j];
 		for (x=0; x<8; x++) {
-			pn1 = pnt + (((x*24)+24) * BMPW) + 20;
+			pn1 = pnt + (((x*24)+24) * BMPW) + BMP_XOFFS;
 			if (d & mask) {
 				for(i=0; i<24; i++) {
 					if ((pn1 >= (unsigned long)clip_low) && (pn1 <= (unsigned long)clip_high)) {
@@ -438,11 +456,13 @@ unsigned char *get_raw_pixel_line(BITMAP *pSurface, int y) {
 
 /*============================================================================*/
 /*============================================================================*/
-void finish_display()
+void O2EM_HOT_FUNC(finish_display)()
 {
 #ifdef __O2EM_PICO__
-	if (app_data.vpp)
-		vpp_finish_bmp(vscreen, 9, 5, BMPW - 9, BMPH - 5, BMPW, BMPH);
+	/* VPP overlay is stubbed on Pico (see vpp.c). Hand off the full
+	 * vscreen to the platform layer which converts 8-bit indexed
+	 * pixels to the display format and writes them to the display
+	 * driver in one shot. */
 	o2em_render_frame(vscreen, col, BMPW, BMPH, palette_lut, app_data.vpp);
 	return;
 #else
@@ -561,7 +581,7 @@ void clear_collision()
 
 /*============================================================================*/
 /*============================================================================*/
-void draw_display()
+void O2EM_HOT_FUNC(draw_display)()
 {
 	int i, j, x, sm, t;
 	Byte y, b, d1, cl, c;
@@ -613,7 +633,7 @@ void draw_display()
 		cl = ((cl&2) | ((cl&1)<<2) | ((cl&4)>>2)) + 8;
 		/*174*/
 		if ((x < 164) && (y > 0) && (y < 232)) { /*TODO why 164 0 and 232 ?*/
-			pnt = y * BMPW + (x * 2) + 20 + sproff;
+			pnt = y * BMPW + (x * 2) + BMP_XOFFS + sproff;
 			if (t & 4) { /*bit 2 If this bit is 1 the size of the sprite doubles*/
 				if ((pnt+BMPW*32 >= (unsigned long)clip_low) && (pnt <= (unsigned long)clip_high)) {
 					for (j=0; j<8; j++) {
@@ -665,7 +685,7 @@ void draw_display()
  * chr = This register holds the lowest 8 bits of the charset pointer.
  * col bit 0 = This is bit 8 of the charset pointer, the highest bit.
  * */
-void draw_char(Byte ypos, Byte xpos, Byte chr, Byte col)
+void O2EM_HOT_FUNC(draw_char)(Byte ypos, Byte xpos, Byte chr, Byte col)
 {
 	int j, c;
 	Byte cl, d1;
@@ -673,7 +693,7 @@ void draw_char(Byte ypos, Byte xpos, Byte chr, Byte col)
 	unsigned int pnt;
 
 	y = (ypos & 0xFE);
-	pnt = y * BMPW + ((xpos - 8) * 2) + 20;
+	pnt = y * BMPW + ((xpos - 8) * 2) + BMP_XOFFS;
 	#ifdef VIDEO_DEBUG
 	/*printf("ypos=%d xpos=%d chr=%d col=%d pnt=%d\n", ypos, xpos, chr, col, pnt);*/
 	#endif
@@ -717,7 +737,7 @@ void draw_char(Byte ypos, Byte xpos, Byte chr, Byte col)
  * This code is quite slow and needs a rewrite by somebody with more experience
  * than I (sgust) have */
 
-void draw_quad(Byte ypos, Byte xpos, Byte cp0l, Byte cp0h, Byte cp1l, Byte cp1h, Byte cp2l, Byte cp2h, Byte cp3l, Byte cp3h)
+void O2EM_HOT_FUNC(draw_quad)(Byte ypos, Byte xpos, Byte cp0l, Byte cp0h, Byte cp1l, Byte cp1h, Byte cp2l, Byte cp2h, Byte cp3l, Byte cp3h)
 {
 	/* char set pointers */
 	int chp[4];
@@ -731,7 +751,7 @@ void draw_quad(Byte ypos, Byte xpos, Byte cp0l, Byte cp0h, Byte cp1l, Byte cp1h,
 	int i, j, lines;
 
 	/* get screen bitmap position of quad */
-	pnt = (ypos & 0xfe) * BMPW + ((xpos - 8) * 2) + 20;
+	pnt = (ypos & 0xfe) * BMPW + ((xpos - 8) * 2) + BMP_XOFFS;
 	/* abort drawing if completely below the bottom clip */
 	if (pnt > (unsigned long) clip_high) return;
 	/* extract and convert char-set offsets */
@@ -777,10 +797,15 @@ void draw_quad(Byte ypos, Byte xpos, Byte cp0l, Byte cp0h, Byte cp1l, Byte cp1h,
 /*============================================================================*/
 void close_display()
 {
+#ifdef __O2EM_PICO__
+	if (vscreen) { free(vscreen); vscreen = NULL; }
+	if (col) { frens_f_free(col); col = NULL; }
+#else
 	/*
 	free(vscreen);
 	free(col);
 	*/
+#endif
 }
 
 
@@ -878,12 +903,25 @@ void display_msg(char *msg, int waits)
 
 /*============================================================================*/
 /*============================================================================*/
-extern void *frens_f_malloc(size_t size);
 int init_display() {
 #ifdef __O2EM_PICO__
 	create_cmap();
-	vscreen = (Byte *)frens_f_malloc(BMPW * BMPH);
-	col = (Byte *)frens_f_malloc(BMPW * BMPH);
+	/* vscreen MUST be in SRAM: per-scanline memset() (bg fill) and the
+	 * end-of-frame conversion read/write the whole buffer, both of
+	 * which are too slow over PSRAM (drops fps to ~40 on Fruit Jam).
+	 *
+	 * col can live in PSRAM (frens_f_malloc) - it is only touched
+	 * per-pixel inside mputvid() on actual sprite/char/grid draws,
+	 * not in the bg memset path, so the PSRAM hit is small. On boards
+	 * without PSRAM frens_f_malloc transparently falls back to SRAM. */
+	if (vscreen == NULL)
+		vscreen = (Byte *)malloc(BMPW * BMPH);
+	if (col == NULL)
+		col = (Byte *)frens_f_malloc(BMPW * BMPH);
+	if (vscreen == NULL || col == NULL) {
+		fprintf(stderr, "init_display: failed to allocate vscreen/col\n");
+		return O2EM_FAILURE;
+	}
 	memset(vscreen, 0, BMPW * BMPH);
 	memset(col, 0, BMPW * BMPH);
 	return O2EM_SUCCESS;
