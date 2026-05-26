@@ -155,34 +155,25 @@ int search_for_bios(char *pathx, char *bios_found, int bios_type)
  * param biossux filename to the bios
  * param app_data resource data
  * */
-/* TODO seems obsoletes*/
+/* Fast CRC to BIOS type mapping used by identify_bios(). */
+static inline int bios_type_from_crc(uint32_t crc)
+{
+	switch (crc) {
+		case CRC_ODYSSEY2: return BIOS_ODYSSEY2;
+		case CRC_G7400:    return BIOS_G7400;
+		case CRC_C52:      return BIOS_C52;
+		case CRC_JOPAC:    return BIOS_JOPAC;
+		default:           return O2EM_FAILURE; /* all BIOS_ values are > 0 */
+	}
+}
+
 int identify_bios(char *biossux, struct resource *app_data)
 {
 	#ifdef __O2EM_DEBUG__
 	printf("DEBUG %s bios=%s\n", __func__, biossux);
 	#endif
 	app_data->crc = crc32_file(biossux);
-	if (app_data->crc == 0x8016A315) {
-/*		strcpy(odyssey2, biossux);*/
-/*		o2flag = 1;*/
-		return BIOS_ODYSSEY2;
-	}
-	if (app_data->crc == 0xE20A9F41) {
-/*		strcpy(g7400, biossux);*/
-		/*g74flag = 1; */
-		return BIOS_G7400;
-	}
-	if (app_data->crc == 0xA318E8D6) {
-/*		strcpy(c52, biossux);*/
-/*		c52flag = 1;*/
-		return BIOS_C52;
-	}
-	if (app_data->crc == 0x11647CA5) {
-/*		strcpy(jopac, biossux);*/
-/*		jopflag = 1;*/
-		return BIOS_JOPAC;
-	}
-	return O2EM_FAILURE;/* all BIOS_ is > 0*/
+	return bios_type_from_crc(app_data->crc);
 }
 
 /*===========================================================================*/
