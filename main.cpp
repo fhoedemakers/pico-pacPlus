@@ -80,8 +80,8 @@ const int8_t g_settings_visibility_o2em[MOPT_COUNT] = {
 };
 
 const uint8_t g_available_screen_modes_o2em[] = {
-    1, // SCANLINE_8_7
-    1, // NOSCANLINE_8_7
+    0, // SCANLINE_8_7     
+    0, // NOSCANLINE_8_7   
     1, // SCANLINE_1_1
     1  // NOSCANLINE_1_1
 };
@@ -484,6 +484,9 @@ extern "C" void o2em_poll_input()
         joy[i].stick[0].axis[0].d2 = (v & RIGHT) ? 1 : 0;
         joy[i].button[0].b = (v & A) ? 1 : 0;
 
+        if (v & START)
+            key[KEY_1] = 1;
+
         if (i == 0)
         {
             // Reboot to BOOTSEL mode
@@ -634,9 +637,11 @@ int main()
     FrensSettings::initSettings(FrensSettings::O2EM);
     isFatalError = !Frens::initAll(selectedRom, CPUFreqKHz, 4, 4, AUDIOBUFFERSIZE, false, true);
 
-    scaleMode8_7_ = Frens::applyScreenMode(settings.screenMode);
     g_settings_visibility = g_settings_visibility_o2em;
     g_available_screen_modes = g_available_screen_modes_o2em;
+    if (!g_available_screen_modes[static_cast<int>(settings.screenMode)])
+        settings.screenMode = ScreenMode::NOSCANLINE_1_1;
+    scaleMode8_7_ = Frens::applyScreenMode(settings.screenMode);
     bool showSplash = true;
 
     while (true)
