@@ -7,10 +7,6 @@ Put your VideoPac/Odyssey 2 rom files (.bin) and optional [metadata](#using-meta
 > [!NOTE]
 > The emulator only runs on RP2350 based boards. It is not supported on the original Raspberry Pi Pico or other RP2040 based boards.
 
-> [!WARNING]
-> **Only HSTX boards (e.g. Adafruit Fruit Jam) deliver proper 60 Hz output and universal monitor compatibility; non‑HSTX (PicoDVI) builds set the refresh rate to 77.1 Hz and may be rejected by some displays.**
-> If you experience problems, try using a **different monitor or TV**.
-
 ## BIOS requirements
 
 The Philips VideoPac G7000/Magnavox Odyssey 2 requires a BIOS ROM file to function. You must place the BIOS file on the SD card root directory.
