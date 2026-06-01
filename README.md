@@ -134,6 +134,6 @@ git submodule update --init
 ./bld.sh -c8
 ```
 
-Use `./bld.sh --h` for all available options.
+Use `./bld.sh -h` for all available options.
 
 The resulting .uf2 file will be in the `releases/` folder. Copy it to the Pico when in bootloader mode.
