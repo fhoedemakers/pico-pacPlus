@@ -48,6 +48,24 @@
 #include "o2em_pico_callbacks.h"
 extern void *frens_f_malloc(size_t size);
 extern void frens_f_free(void *ptr);
+
+/* RP2040 memory squeeze: pack vscreen at 4bpp (16 O2 colors) and col at
+ * half horizontal resolution (O2 pixels are double-wide; one collision
+ * slot covers a pixel pair). Saves ~76KB SRAM. RP2350 keeps the
+ * straightforward 8-bit / full-width layout. */
+#if PICO_RP2350
+#define VSCREEN_BYTES_PER_LINE (BMPW)
+#define COL_BYTES_PER_LINE     (BMPW)
+#define O2EM_PACK_VSCREEN      0
+#define O2EM_PACK_COL          0
+#else
+#define VSCREEN_BYTES_PER_LINE ((BMPW) / 2)
+#define COL_BYTES_PER_LINE     ((BMPW) / 2)
+#define O2EM_PACK_VSCREEN      1
+#define O2EM_PACK_COL          1
+#endif
+#define VSCREEN_TOTAL_BYTES (VSCREEN_BYTES_PER_LINE * (BMPH))
+#define COL_TOTAL_BYTES     (COL_BYTES_PER_LINE     * (BMPH))
 #endif
 
 
@@ -358,9 +376,29 @@ void O2EM_HOT_FUNC(mputvid)(unsigned int ad, unsigned int len, Byte d, Byte c)
 	if ((ad > (unsigned long)clip_low) && (ad < (unsigned long)clip_high)) {
 		for (i = 0; i < len; i++) {
 			if (ad >= BMPW * BMPH) break;
+#if defined(__O2EM_PICO__) && O2EM_PACK_VSCREEN
+			/* 4bpp pack: low nibble = even ad, high nibble = odd ad */
+			{
+				unsigned int bi = ad >> 1;
+				Byte b = vscreen[bi];
+				Byte v = d & 0x0f;
+				vscreen[bi] = (ad & 1) ? ((b & 0x0f) | (v << 4)) : ((b & 0xf0) | v);
+			}
+#else
 			vscreen[ad] = d;
+#endif
+#if defined(__O2EM_PICO__) && O2EM_PACK_COL
+			/* Half-width col: one slot per O2 pixel pair (idempotent on
+			 * pair-aligned writes; odd-aligned writes from sproff=1 sprites
+			 * still OR into the surrounding pair, slightly widening
+			 * collision but never missing one). */
+			col[ad >> 1] |= c;
+			coltab[c] |= col[ad >> 1];
+			ad++;
+#else
 			col[ad] |= c;
 			coltab[c] |= col[ad++];
+#endif
 		}
 	}
 }
@@ -592,8 +630,14 @@ void O2EM_HOT_FUNC(draw_display)()
 		return;
 	}
 
-	for (i = clip_low/BMPW; i < clip_high/BMPW; i++)
-		memset(vscreen + i * BMPW, ((ColorVector[i] & 0x38) >> 3) | (ColorVector[i] & 0x80 ? 0 : 8), BMPW);
+	for (i = clip_low/BMPW; i < clip_high/BMPW; i++) {
+		Byte bg = ((ColorVector[i] & 0x38) >> 3) | (ColorVector[i] & 0x80 ? 0 : 8);
+#if defined(__O2EM_PICO__) && O2EM_PACK_VSCREEN
+		memset(vscreen + i * VSCREEN_BYTES_PER_LINE, (bg & 0x0f) | ((bg & 0x0f) << 4), VSCREEN_BYTES_PER_LINE);
+#else
+		memset(vscreen + i * BMPW, bg, BMPW);
+#endif
+	}
 
 	if (VDCwrite[0xA0] & 0x08)/* 0xA0 Bit 3 If this bit is 1 the grid is displayed. */
 		draw_grid();
@@ -915,15 +959,15 @@ int init_display() {
 	 * not in the bg memset path, so the PSRAM hit is small. On boards
 	 * without PSRAM frens_f_malloc transparently falls back to SRAM. */
 	if (vscreen == NULL)
-		vscreen = (Byte *)malloc(BMPW * BMPH);
+		vscreen = (Byte *)malloc(VSCREEN_TOTAL_BYTES);
 	if (col == NULL)
-		col = (Byte *)frens_f_malloc(BMPW * BMPH);
+		col = (Byte *)frens_f_malloc(COL_TOTAL_BYTES);
 	if (vscreen == NULL || col == NULL) {
 		fprintf(stderr, "init_display: failed to allocate vscreen/col\n");
 		return O2EM_FAILURE;
 	}
-	memset(vscreen, 0, BMPW * BMPH);
-	memset(col, 0, BMPW * BMPH);
+	memset(vscreen, 0, VSCREEN_TOTAL_BYTES);
+	memset(col, 0, COL_TOTAL_BYTES);
 	return O2EM_SUCCESS;
 #else
 	#ifdef __O2EM_DEBUG__

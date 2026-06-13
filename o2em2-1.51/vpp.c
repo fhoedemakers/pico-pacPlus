@@ -521,10 +521,18 @@ void load_colplus(Byte *col)
 {
 	if (col == NULL) return;
 #ifdef __O2EM_PICO__
+	/* Match the col buffer layout chosen in vdc.c. VPP is stubbed on Pico
+	 * (colplus stays NULL), so in practice only the memset path runs. */
+	#if PICO_RP2350
+	#define COLPLUS_SIZE (BMPW * BMPH)
+	#else
+	#define COLPLUS_SIZE ((BMPW / 2) * BMPH)
+	#endif
 	if (vppon && colplus)
-		memcpy(col, colplus, BMPW * BMPH);
+		memcpy(col, colplus, COLPLUS_SIZE);
 	else
-		memset(col, 0, BMPW * BMPH);
+		memset(col, 0, COLPLUS_SIZE);
+	#undef COLPLUS_SIZE
 #else
 	if (vppon)
 		memcpy(col, colplus, BMPW * BMPH);

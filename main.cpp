@@ -37,7 +37,10 @@ extern "C"
 #if PICO_RP2350
 #define AUDIOBUFFERSIZE 1024
 #else
-#define AUDIOBUFFERSIZE 256
+// O2EM writes 735 samples/frame in one burst; the HDMI audio ring must hold a
+// full burst or samples are dropped (choppy sound). 1024 (power-of-two, as the
+// ring requires) covers a frame's burst plus headroom. ~+3KB SRAM vs 256.
+#define AUDIOBUFFERSIZE 1024
 #endif
 
 #ifndef DVI_AUDIO_GAIN_Q8
@@ -180,6 +183,99 @@ static void init_app_data()
     strcpy(app_data.biosdir, "/bios");
 }
 
+#if !HSTX
+// RP2040 DVI line-streaming: core1 reads vscreen directly via this callback
+// (see Frens::setLineStreamFill) instead of core0 feeding the line queue, so
+// core0 is free to emulate and the DMA is fed continuously (no red flicker).
+// o2em_render_frame captures the current vscreen/palette/stride here each frame;
+// the callback runs on core1 and must tolerate a null source (startup / teardown).
+static volatile Byte *g_ls_vscreen = nullptr;
+static volatile const unsigned short *g_ls_palette = nullptr;
+static volatile int g_ls_stride = 0;
+
+// FPS digit overlay for one scanline. Deliberately NOT __not_in_flash_func:
+// keeping this code in flash (rather than inlined into the SRAM-resident
+// callback below) avoids growing SRAM, which is exhausted on this RP2040 path.
+// core1 calls it only for the ~8 FPS rows, where it has ample per-frame slack,
+// so the flash access doesn't disturb DVI timing. `fps` is updated each frame
+// by o2em_render_frame's displayFrameRate block. noinline keeps it out of the
+// SRAM-resident callback (inlining would put this code back in SRAM).
+static __attribute__((noinline)) void draw_fps_overlay(uint16_t *dst, int line, const unsigned short *pal)
+{
+    WORD fgc = pal[15];
+    WORD bgc = pal[0];
+    char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
+    uint16_t *p = dst + 4;
+    int rowInChar = line - 8;
+    for (int i = 0; i < 2; i++)
+    {
+        char fontSlice = getcharslicefrom8x8font(fpsString[i], rowInChar);
+        for (int bit = 0; bit < 8; bit++)
+        {
+            *p++ = (fontSlice & 1) ? fgc : bgc;
+            fontSlice >>= 1;
+        }
+    }
+}
+
+static void __not_in_flash_func(pac_fill_dvi_line)(int line, uint16_t *dst)
+{
+    Byte *vs = (Byte *)g_ls_vscreen;
+    const unsigned short *pal = (const unsigned short *)g_ls_palette;
+    if (!vs || !pal)
+    {
+        memset(dst, 0, 640 * sizeof(uint16_t));
+        return;
+    }
+    Byte *src = vs + line * g_ls_stride;
+#if PICO_RP2350
+    for (int x = 0; x < 320; x++)
+        dst[x] = pal[src[x] & 0x1f];
+#else
+    // 4bpp packed: low nibble = even x, high nibble = odd x.
+    for (int x = 0; x < 320; x += 2)
+    {
+        Byte pix = src[x >> 1];
+        dst[x] = pal[pix & 0x0f];
+        dst[x + 1] = pal[(pix >> 4) & 0x0f];
+    }
+#endif
+    memset(dst + 320, 0, (640 - 320) * sizeof(uint16_t)); // black right margin
+
+    // FPS overlay (line-stream path): o2em_render_frame no longer touches line
+    // buffers, so draw the digits here. Bulk drawing is in the flash-resident
+    // helper to keep this SRAM callback small.
+    if (settings.flags.displayFrameRate && line >= 8 && line < 16)
+        draw_fps_overlay(dst, line, pal);
+}
+
+// Switch core1 from line-stream mode back to the default queue model so menu/UI
+// code (settings menu, etc.) that renders via getLineBuffer/setLineBuffer works.
+// Waits until core1 has actually left the vscreen-read loop.
+static void suspendLineStream()
+{
+    if (Frens::isFrameBufferUsed())
+        return;
+    Frens::setLineStreamFill(nullptr);
+    uint32_t guard = 0;
+    while (Frens::lineStreamActive() && ++guard < 1000000)
+        tight_loop_contents();
+}
+
+// Switch core1 into line-stream mode (read vscreen directly). Feeds one
+// throwaway line so core1 — blocked in the queue-mode deque() — wakes and
+// re-checks, entering the callback loop.
+static void resumeLineStream()
+{
+    if (Frens::isFrameBufferUsed())
+        return;
+    Frens::setLineStreamFill(pac_fill_dvi_line);
+    auto b = dvi_->getLineBuffer();
+    memset(b->data(), 0, b->size() * sizeof(WORD));
+    dvi_->setLineBuffer(0, b);
+}
+#endif
+
 // Convert the emulator's 8-bit indexed vscreen to the active display
 // driver's pixel format and write it in one shot at end of frame.
 //
@@ -197,11 +293,19 @@ extern "C" void __not_in_flash_func(o2em_render_frame)(Byte *vscreen, Byte *col,
     int vis_w = WNDW; // 320
     int vis_h = WNDH; // 240
 
+    // On RP2040 vscreen is 4bpp packed (low nibble = even x, high nibble = odd x).
+    // On RP2350 vscreen is 8bpp (one byte per pixel).
+#if PICO_RP2350
+    const int src_stride = width;
+#else
+    const int src_stride = width / 2;
+#endif
+
 #if HSTX
     for (int y = 0; y < vis_h; y++)
     {
         WORD *dst = hstx_getlineFromFramebuffer(y);
-        Byte *src = vscreen + y * width;
+        Byte *src = vscreen + y * src_stride;
         for (int x = 0; x < vis_w; x++)
             dst[x] = palette_lut[src[x] & 0x1f];
     }
@@ -212,24 +316,30 @@ extern "C" void __not_in_flash_func(o2em_render_frame)(Byte *vscreen, Byte *col,
         for (int y = 0; y < vis_h; y++)
         {
             WORD *dst = &Frens::framebuffer[y * 320];
-            Byte *src = vscreen + y * width;
+            Byte *src = vscreen + y * src_stride;
+#if PICO_RP2350
             for (int x = 0; x < vis_w; x++)
                 dst[x] = palette_lut[src[x] & 0x1f];
+#else
+            for (int x = 0; x < vis_w; x += 2) {
+                Byte b = src[x >> 1];
+                dst[x]     = palette_lut[b & 0x0f];
+                dst[x + 1] = palette_lut[(b >> 4) & 0x0f];
+            }
+#endif
         }
     }
     else
 #endif
     {
-        for (int y = 0; y < vis_h; y++)
-        {
-            auto b = dvi_->getLineBuffer();
-            WORD *dst = b->data();
-            Byte *src = vscreen + y * width;
-            int max_w = b->size() < (size_t)vis_w ? b->size() : vis_w;
-            for (int x = 0; x < max_w; x++)
-                dst[x] = palette_lut[src[x] & 0x1f];
-            dvi_->setLineBuffer(y, b);
-        }
+        // Decoupled line-streaming: do NOT feed lines here (that blocks core0 on
+        // DMA pacing). Just publish the current source so core1's line-stream
+        // callback (pac_fill_dvi_line) can read vscreen directly and feed the
+        // DMA continuously. core0 returns immediately and is free to emulate.
+        (void)vis_w;
+        g_ls_palette = palette_lut;
+        g_ls_stride = src_stride;
+        g_ls_vscreen = vscreen; // publish last so the callback sees a consistent set
     }
 #endif
 
@@ -596,10 +706,17 @@ static void processPerFrame()
         turnOffAllLeds();
     }
 #endif
-
+    //printf("frame: %3lu\n", count);
     if (showSettings)
     {
         showSettings = false;
+#if !HSTX
+        // The settings menu renders via the queue model (DrawScreen ->
+        // setLineBuffer); core1 must leave line-stream mode or the menu's feed
+        // stalls and the game freezes. Hand display back to the queue, run the
+        // menu, then resume line-streaming.
+        suspendLineStream();
+#endif
         int rval = showSettingsMenu(true);
         if (rval == 3)
         {
@@ -612,6 +729,10 @@ static void processPerFrame()
             init_vpp();
             clearscr();
         }
+#if !HSTX
+        if (!key_done)          // if exiting the game, the loop teardown handles core1
+            resumeLineStream();
+#endif
     }
 }
 
@@ -778,6 +899,29 @@ int main()
             menuPumpBlankFrames(180);
         }
 
+        // Line-streaming mode (RP2040, no framebuffer): the emulator feeds a
+        // full 0..239 run each frame via o2em_render_frame. The DVI IRQ only
+        // hands a line to the display when line*2 == lineCounter, so any
+        // hardware top/bottom margin blanks those lineCounters and the matching
+        // lines (0..3 / 236..239) can never be consumed -> the line queue fills,
+        // getLineBuffer() blocks, and both cores deadlock (red screen, core0
+        // stuck inside o2em_render_frame). Run with zero margins so every fed
+        // line is matched, exactly like the menu / menuPumpBlankFrames paths.
+        // (Framebuffer builds already force margins to 0; HSTX ignores them.)
+#if !HSTX
+        if (!Frens::isFrameBufferUsed())
+        {
+            dvi_->getBlankSettings().top = 0;
+            dvi_->getBlankSettings().bottom = 0;
+
+            // Decoupled line-streaming: hand the display to core1, which reads
+            // vscreen directly via pac_fill_dvi_line and feeds the DMA
+            // continuously (no core0 blocking -> no red flicker).
+            g_ls_vscreen = nullptr; // callback fills black until first frame is captured
+            resumeLineStream();
+        }
+#endif
+
         Frens::PaceFrames60fps(true);
         start_tick_us = Frens::time_us();
         prevButtons[0] = prevButtons[1] = 0;
@@ -787,7 +931,29 @@ int main()
         {
             cpu_exec();
             processPerFrame();
+
+#if !HSTX
+            // Decoupled line-streaming removed the blocking feed that used to
+            // pace core0, and PaceFrames60fps only paces the framebuffer path.
+            // Phase-lock core0 to core1's line-stream read pass: core1 raises
+            // vsync at each read-frame start, waitForVSync blocks until then.
+            // This locks core0 to the DVI 60Hz (exact audio rate) AND keeps
+            // core0's ~10.6ms render ahead of core1's ~16.6ms read, so the tear
+            // seam stops crawling and largely disappears. (vsync is volatile, so
+            // unlike getFrameCounter the poll isn't hoisted.)
+            if (!Frens::isFrameBufferUsed())
+                Frens::waitForVSync();
+#endif
         }
+
+#if !HSTX
+        // Leaving the game: stop core1 reading vscreen before it is freed.
+        // Clear the callback, wait for core1 to finish its current frame and
+        // drop out of line-stream mode, then drop the source pointer. After this
+        // core1 is back in queue mode and the menu's setLineBuffer feeds it again.
+        suspendLineStream();    // stop core1 reading vscreen before it is freed
+        g_ls_vscreen = nullptr;
+#endif
 
         // Free emulator graphics buffers (vscreen, col) so the next
         // game can re-allocate them. Without this we leak ~152KB per
