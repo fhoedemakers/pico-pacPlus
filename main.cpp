@@ -193,6 +193,14 @@ static volatile Byte *g_ls_vscreen = nullptr;
 static volatile const unsigned short *g_ls_palette = nullptr;
 static volatile int g_ls_stride = 0;
 
+// Read-pass counter: incremented by pac_fill_dvi_line when core1 starts a new
+// pass (line==0). Used by the emulation loop to wait an exact number of DVI
+// passes per emulated frame. Robust where waitForVSync isn't: the shared vsync
+// flag goes true->false too fast for back-to-back polls to catch as separate
+// events, so a level-based wait reduces to a single-pass wait regardless of
+// how many times it's called. Counting pass-starts avoids that race.
+static volatile uint32_t g_ls_pass_count = 0;
+
 // FPS digit overlay for one scanline. Deliberately NOT __not_in_flash_func:
 // keeping this code in flash (rather than inlined into the SRAM-resident
 // callback below) avoids growing SRAM, which is exhausted on this RP2040 path.
@@ -220,6 +228,8 @@ static __attribute__((noinline)) void draw_fps_overlay(uint16_t *dst, int line, 
 
 static void __not_in_flash_func(pac_fill_dvi_line)(int line, uint16_t *dst)
 {
+    if (line == 0)
+        g_ls_pass_count++;          // signal start of a new DVI read pass
     Byte *vs = (Byte *)g_ls_vscreen;
     const unsigned short *pal = (const unsigned short *)g_ls_palette;
     if (!vs || !pal)
@@ -922,9 +932,34 @@ int main()
         }
 #endif
 
+        // Number of DVI frames each emulated frame should occupy. evblclk is the
+        // O2's per-frame CPU cycle budget (5964 = NTSC, 7259 = PAL); some titles
+        // (Pick Axe Pete: 12000) double it, meaning one game frame takes two NTSC
+        // periods, so cpu_exec runs ~21ms wall-clock — more than one DVI frame.
+        // Without compensating, core0 would miss the next vsync while still
+        // writing vscreen, and core1 (which reads vscreen live in line-stream
+        // mode) would display a half-written frame -> mid-screen tear band.
+        // Nearest-integer ratio keeps standard NTSC/PAL at 60Hz refresh while
+        // 2x titles correctly show each emulated frame for two DVI refreshes
+        // (matching the implicit behaviour of the RP2350 framebuffer path).
+        int dvi_frames_per_emu = (evblclk + EVBLCLK_NTSC / 2) / EVBLCLK_NTSC;
+        if (dvi_frames_per_emu < 1) dvi_frames_per_emu = 1;
+
         Frens::PaceFrames60fps(true);
         start_tick_us = Frens::time_us();
         prevButtons[0] = prevButtons[1] = 0;
+
+        // Pass-target accumulator (RP2040 line-stream path only — g_ls_pass_count
+        // is only declared under !HSTX). Sampled once before the loop; each
+        // iteration adds dvi_frames_per_emu, so the iteration total stays
+        // exactly N DVI frames regardless of cpu_exec wall time. Sampling
+        // target on every iteration AFTER cpu_exec (as before) was wrong:
+        // cpu_exec for evblclk=12000 takes ~21ms, during which 2 passes
+        // already complete -> adding N=2 on top gave N+2 = 4 passes per
+        // iteration (20Hz instead of 30Hz for Pick Axe Pete).
+#if !HSTX
+        uint32_t target_pass = g_ls_pass_count;
+#endif
 
         // Emulation loop
         while (!key_done)
@@ -933,16 +968,23 @@ int main()
             processPerFrame();
 
 #if !HSTX
-            // Decoupled line-streaming removed the blocking feed that used to
-            // pace core0, and PaceFrames60fps only paces the framebuffer path.
-            // Phase-lock core0 to core1's line-stream read pass: core1 raises
-            // vsync at each read-frame start, waitForVSync blocks until then.
-            // This locks core0 to the DVI 60Hz (exact audio rate) AND keeps
-            // core0's ~10.6ms render ahead of core1's ~16.6ms read, so the tear
-            // seam stops crawling and largely disappears. (vsync is volatile, so
-            // unlike getFrameCounter the poll isn't hoisted.)
-            if (!Frens::isFrameBufferUsed())
-                Frens::waitForVSync();
+            // Phase-lock core0 to core1's line-stream read pass. We use the
+            // pass-start counter (incremented by pac_fill_dvi_line when called
+            // with line==0) rather than Frens::waitForVSync(), because the
+            // shared vsync flag goes true->false too fast for a back-to-back
+            // poll to see them as separate events — a level-based loop
+            // collapses to a single-pass wait. The counter approach is robust:
+            // accumulating target by N per iteration is exactly N DVI frames
+            // per iteration on average, locking core0 to the DVI rate.
+            // Skip when key_done: showSettingsMenu's "Quit game" sets key_done
+            // without calling resumeLineStream(), so core1 is in queue mode
+            // (no pass-count increments) — spinning here would hang forever.
+            if (!Frens::isFrameBufferUsed() && !key_done)
+            {
+                target_pass += (uint32_t)dvi_frames_per_emu;
+                while ((int32_t)(target_pass - g_ls_pass_count) > 0)
+                    tight_loop_contents();
+            }
 #endif
         }
 
