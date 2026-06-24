@@ -104,6 +104,8 @@ uint32_t crc32_buf(const void *buf, long len)
 
 
 #ifdef __O2EM_PICO__
+extern void *frens_f_malloc(size_t size);
+extern void frens_f_free(void *ptr);
 uint32_t crc32_file(const char *filename)
 {
 	uint32_t crc = ~0;
