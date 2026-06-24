@@ -1,15 +1,5 @@
 # pico-pacPlus
 
-## A personal story
-
-When I was a kid growing up in Belgium in the early 1980s, the Philips VideoPac G7000 was the center of my world. It was my very first game console -- a big deal for any child. I remember the day it arrived: the sleek silver-and-black machine with its built-in membrane keyboard, an exotic piece of technology that looked like it belonged on a spaceship.
-
-My friends had Ataris, but I had the VideoPac, and I wouldn't have traded it for anything. I spent countless hours playing *K.C. Munchkin!*, guiding my little character through mazes while the dots actually ran away from me -- something Pac-Man never did. *Alien Invaders* kept me glued to the screen, blasting wave after wave of descending aliens, and *Pick Axe Pete!* had me on the edge of my seat, swinging a pickaxe at boulders. But the cartridge that truly changed everything was *Videopac No. 9: Computer Programmer* -- it let you type in simple programs on that membrane keyboard and see them run. It was my very first taste of programming, and it planted a seed that would shape the rest of my life. There was something magical about typing on that keyboard, something that made you feel like you were really *operating* a computer, not just playing with a toy.
-
-The VideoPac was eventually succeeded by the G7400, the VideoPac+, which added enhanced background graphics and more colors. Though the G7400 never achieved the commercial success it deserved, it represented a real leap forward.
-
-Years later, I rediscovered the Odyssey 2 / VideoPac community online and found the O2EM emulator, which lovingly preserved these games for a new generation. When I started building retro-gaming handhelds and consoles around the Raspberry Pi Pico, I knew I had to bring the VideoPac back to life on real hardware. This project, **pico-pacPlus**, is the result: a love letter to the console that started it all for me. Every time I boot it up and hear those familiar sounds, I'm 14 years old again, sitting cross-legged in front of the TV, controller in hand, completely lost in the game.
-
 ## Introduction
 
 **pico-pacPlus** is an Odyssey 2 / VideoPac+ (G7400) emulator for Raspberry Pi Pico, Pico 2, and other RP2040/RP2350-based microcontrollers. It is based on the [O2EM](https://sourceforge.net/projects/o2em/) emulator by Daniel Boris, Andre de la Rocha, and LABBE Corentin, ported to the Raspberry Pi Pico platform with SD card support, an on-screen menu system, and HDMI video output.
@@ -200,25 +190,30 @@ When using a USB keyboard in-game:
 
 ## Building from source
 
-You can use the included build script. You can then copy the correct `.uf2` to your Pico via the BOOTSEL option. The script builds all the `.uf2` files and puts them in the releases folder.
+Clone the repository and initialize the submodules:
 
 ```bash
 git clone https://github.com/fhoedemakers/pico-pacPlus.git
 cd pico-pacPlus
 git submodule update --init
-chmod +x pico_shared/bld.sh
+chmod +x pico_shared/bld.sh buildAll.sh
 ```
 
-Use the `bld.sh` shell script to build:
+To build every supported hardware configuration in one go, run `./buildAll.sh`. It invokes `bld.sh` for each config, puts the resulting `.uf2` files in the `releases/` folder, and prints `picotool info` for each one. Copy the `.uf2` matching your board to your Pico via BOOTSEL.
+
+To build a single configuration, use `bld.sh` (a thin wrapper around `pico_shared/bld.sh`):
 
 ```
-Usage: ./pico_shared/bld.sh [-d] [-2 | -r] [-w] [-u] [-m] [-D] [-t path to toolchain] [-p nprocessors] [-c <hwconfig>]
+Usage: ./bld.sh [-d] [-2 | -r] [-w] [-u] [-m] [-D] [-e] [-b] [-t path to toolchain] [-p nprocessors] [-c <hwconfig>]
 Options:
   -d: build in DEBUG configuration
   -2: build for Pico 2 board (RP2350)
   -r: build for Pico 2 board (RP2350) with riscv core
   -u: enable PIO USB support (RP2350 only)
   -w: build for Pico_w or Pico2_w
+  -m: run cmake only, do not build the project
+  -e: use the pico-extras based I2S audio driver (default: legacy custom driver)
+  -b: build for the resident emuLoader bootloader (links the image at 0x10100000 instead of 0x10000000)
   -D: Force DVI over HSTX
   -c <hwconfig>: specify the hardware configuration
      1: Pimoroni Pico DV Demo Base (Default)
@@ -233,6 +228,7 @@ Options:
      10: Spotpear HDMI board
      12: Murmulator M1
      13: Murmulator M2 (RP2350 only)
+     14: Adafruit Feather RP2350 with TLV320DAC3100 I2S DAC, SD card breakout and PIO USB
 ```
 
 When using Visual Studio Code, choose the Release or the RelWithDebugInfo build variant.
