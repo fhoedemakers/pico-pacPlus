@@ -186,6 +186,19 @@ static void init_app_data()
     strcpy(app_data.biosdir, "/bios");
 }
 
+#if HSTX
+// HSTX framebuffer is single-buffered. Doing the vscreen->framebuffer bulk copy
+// at end of cpu_exec (the natural call site) lands it at t~10ms past vsync —
+// mid-active-scanout — so any moving sprite races the DMA and tears (visible
+// on Invaders from Space's player ship). Defer the copy: o2em_render_frame
+// captures vscreen/palette here, and present_hstx_frame() (called from
+// processPerFrame the instant PaceFrames60fps returns) does the copy during
+// the ~1.4ms vblank window before active scanout begins.
+static volatile Byte *g_hstx_vscreen = nullptr;
+static volatile const unsigned short *g_hstx_palette = nullptr;
+static volatile int g_hstx_stride = 0;
+#endif
+
 #if !HSTX
 // RP2040 DVI line-streaming: core1 reads vscreen directly via this callback
 // (see Frens::setLineStreamFill) instead of core0 feeding the line queue, so
@@ -315,13 +328,14 @@ extern "C" void __not_in_flash_func(o2em_render_frame)(Byte *vscreen, Byte *col,
 #endif
 
 #if HSTX
-    for (int y = 0; y < vis_h; y++)
-    {
-        WORD *dst = hstx_getlineFromFramebuffer(y);
-        Byte *src = vscreen + y * src_stride;
-        for (int x = 0; x < vis_w; x++)
-            dst[x] = palette_lut[src[x] & 0x1f];
-    }
+    // Defer bulk copy to vblank: capture source here, present_hstx_frame()
+    // (called from processPerFrame right after the pace wait) does the copy.
+    // Publish vscreen last so the consumer never sees an inconsistent triple.
+    (void)vis_w;
+    (void)vis_h;
+    g_hstx_palette = palette_lut;
+    g_hstx_stride = src_stride;
+    g_hstx_vscreen = vscreen;
 #else
 #if FRAMEBUFFERISPOSSIBLE
     if (Frens::isFrameBufferUsed())
@@ -356,34 +370,21 @@ extern "C" void __not_in_flash_func(o2em_render_frame)(Byte *vscreen, Byte *col,
     }
 #endif
 
-    // FPS overlay (writes directly into the display FB; brief tearing
-    // window is acceptable for a few small digits at top-left).
+    // FPS counter tick. On HSTX the digits are drawn by present_hstx_frame()
+    // (which runs in vblank, alongside the bulk copy). On other paths we draw
+    // here — for the RP2040 line-stream path the dedicated per-line overlay in
+    // pac_fill_dvi_line picks up `fps` directly.
     if (settings.flags.displayFrameRate)
     {
         uint32_t tick_us = Frens::time_us() - start_tick_us;
         fps = (1000000 - 1) / tick_us + 1;
         start_tick_us = Frens::time_us();
-        WORD fgc = palette_lut[15];
-        WORD bgc = palette_lut[0];
-        char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
-#if HSTX
-        for (int y = 8; y < 16; y++)
-        {
-            WORD *fpsBuffer = hstx_getlineFromFramebuffer(y) + 4;
-            int rowInChar = y - 8;
-            for (int i = 0; i < 2; i++)
-            {
-                char fontSlice = getcharslicefrom8x8font(fpsString[i], rowInChar);
-                for (int bit = 0; bit < 8; bit++)
-                {
-                    *fpsBuffer++ = (fontSlice & 1) ? fgc : bgc;
-                    fontSlice >>= 1;
-                }
-            }
-        }
-#elif FRAMEBUFFERISPOSSIBLE
+#if !HSTX && FRAMEBUFFERISPOSSIBLE
         if (Frens::isFrameBufferUsed())
         {
+            WORD fgc = palette_lut[15];
+            WORD bgc = palette_lut[0];
+            char fpsString[2] = { (char)('0' + (fps / 10)), (char)('0' + (fps % 10)) };
             for (int y = 8; y < 16; y++)
             {
                 WORD *fpsBuffer = &Frens::framebuffer[y * 320 + 4];
@@ -399,11 +400,71 @@ extern "C" void __not_in_flash_func(o2em_render_frame)(Byte *vscreen, Byte *col,
                 }
             }
         }
-#else
-        (void)fgc; (void)bgc; (void)fpsString;
 #endif
     }
 }
+
+#if HSTX
+// Bulk copy vscreen -> HSTX framebuffer + FPS digits. Called from processPerFrame
+// immediately after PaceFrames60fps returns, i.e. at the start of vblank.
+// DMA scans active region ~1.4ms later; bulk copy completes in ~1.5-2ms, so
+// every framebuffer line is updated before DMA reads it (or just barely after
+// for line 0, where the source pixel is identical between adjacent frames in
+// practice). Eliminates the moving-sprite tear that the previous end-of-cpu_exec
+// copy site (~10ms past vsync, mid-active-scanout) suffered on a single-buffered FB.
+//
+// FPS overlay is *interleaved* inside the bulk loop: each FPS row (8..15) is
+// stamped right after that row's bulk write. A post-loop overlay would land
+// after the bulk pass (t~=1.5-2ms), but DMA starts reading row 8 around
+// t~=1.94ms — the overlay would land too late and the digits wouldn't show.
+// (The old end-of-cpu_exec call site hid this because the FPS write was ~16ms
+// before the next frame's DMA pass; under the new vblank-locked timing the
+// margin is gone, so interleave instead.)
+static void __not_in_flash_func(present_hstx_frame)(void)
+{
+    Byte *vs = (Byte *)g_hstx_vscreen;
+    const unsigned short *pal = (const unsigned short *)g_hstx_palette;
+    if (!vs || !pal)
+        return;
+    const int stride = g_hstx_stride;
+    const bool show_fps = settings.flags.displayFrameRate;
+
+    // Pre-render the 8x16 FPS strip once into RAM so the bulk loop only does
+    // 16 word copies per FPS row (no font lookups in the hot path).
+    WORD fpsStrip[8][16];
+    if (show_fps)
+    {
+        WORD fgc = pal[15];
+        WORD bgc = pal[0];
+        char d0 = (char)('0' + (fps / 10));
+        char d1 = (char)('0' + (fps % 10));
+        for (int row = 0; row < 8; row++)
+        {
+            char s0 = getcharslicefrom8x8font(d0, row);
+            char s1 = getcharslicefrom8x8font(d1, row);
+            for (int b = 0; b < 8; b++)
+            {
+                fpsStrip[row][b]     = (s0 & 1) ? fgc : bgc; s0 >>= 1;
+                fpsStrip[row][8 + b] = (s1 & 1) ? fgc : bgc; s1 >>= 1;
+            }
+        }
+    }
+
+    for (int y = 0; y < WNDH; y++)
+    {
+        WORD *dst = hstx_getlineFromFramebuffer(y);
+        Byte *src = vs + y * stride;
+        for (int x = 0; x < WNDW; x++)
+            dst[x] = pal[src[x] & 0x1f];
+        if (show_fps && (unsigned)(y - 8) < 8u)
+        {
+            const WORD *strip = fpsStrip[y - 8];
+            for (int b = 0; b < 16; b++)
+                dst[4 + b] = strip[b];
+        }
+    }
+}
+#endif
 
 extern "C" void o2em_sound_output(unsigned char *buffer, int len)
 {
@@ -688,6 +749,12 @@ extern "C" void o2em_poll_input()
 static void processPerFrame()
 {
     Frens::PaceFrames60fps(false);
+#if HSTX
+    // Land the bulk vscreen->framebuffer copy in the ~1.4ms vblank that just
+    // started — DMA hasn't begun active scanout yet, so no scanline is read
+    // before its new pixels are written. See present_hstx_frame().
+    present_hstx_frame();
+#endif
     Frens::pollHeadPhoneJack();
     EXT_AUDIO_POLL_HEADPHONE();
 
@@ -998,6 +1065,11 @@ int main()
         // core1 is back in queue mode and the menu's setLineBuffer feeds it again.
         suspendLineStream();    // stop core1 reading vscreen before it is freed
         g_ls_vscreen = nullptr;
+#else
+        // Drop the captured vscreen before close_display() frees it. After the
+        // loop exits processPerFrame is not called again until the next game
+        // starts, but null it anyway so a stray call can't read freed memory.
+        g_hstx_vscreen = nullptr;
 #endif
 
         // Free emulator graphics buffers (vscreen, col) so the next
