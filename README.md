@@ -12,7 +12,9 @@
 - **USB Keyboard Support** -- Full keyboard mapping for games that use the Odyssey 2's built-in keyboard (letters, numbers, and special keys)
 - **Dual Controller Support** -- Two simultaneous controllers; a single USB gamepad automatically mirrors to both emulated joystick ports, since Odyssey 2 games use either port 1 or port 2
 - **BIOS Support** -- Automatically detects and loads the appropriate BIOS for Odyssey 2 or G7400/VideoPac+ systems
-- **Flexible Hardware** -- [Compatible with standard DVI/HDMI breakout boards](#possible-configurations), with optional [custom PCB](#pcb-with-raspberry-pi-pico-or-pico-2) and 3D-printed case designs
+- **Flexible Hardware** -- [Compatible with standard DVI/HDMI breakout boards](#possible-configurations), with optional [custom PCB](#pcb-with-raspberry-pi-pico-or-pico-2) and 3D-printed case designs.
+
+On RP2040 a some games have visual glitches. Runs best on RP2350.
 
 ### Setup Overview
 
@@ -28,6 +30,19 @@ The emulator requires a BIOS ROM to run. Place your BIOS file(s) in the `/bios/`
 
 - For **Odyssey 2 / VideoPac** games, use the standard Odyssey 2 BIOS
 - For **VideoPac+ / G7400** games, the G7400 BIOS is needed for enhanced graphics support
+
+
+## Metadata
+
+The emulator can display box art and a short text description for each ROM when a metadata pack is present on the SD card. With the pack installed, pressing **START** on a ROM in the file browser displays its metadata; the screensaver also shows random box art.
+
+A metadata pack can be downloaded from the [releases page](https://github.com/fhoedemakers/pico-pacPlus/releases) and extracted to the root of the SD card. It is installed under:
+
+```
+/metadata/O2E/
+├── images/   (box art, named by ROM CRC32)
+└── descr/    (text descriptions, named by ROM CRC32)
+```
 
 ### Project Information
 
