@@ -19,7 +19,7 @@ On RP2040 a some games have visual glitches. Runs best on RP2350.
 ### Setup Overview
 
 1. Prepare an SD card formatted as FAT32 or exFAT
-2. Copy your Odyssey 2 / VideoPac ROM files (`.bin`) to the card (subdirectory organization is supported)
+2. Copy your Odyssey 2 / VideoPac ROM files (`.bin`) to the card, preferably in /roms/O2E (subdirectory organization is supported)
 3. Copy the required BIOS file(s) to the `/bios/` directory on the SD card (see [BIOS Setup](#bios-setup) below)
 4. Insert the SD card into the device
 5. Use the menu to browse, select, and play games
