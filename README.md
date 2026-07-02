@@ -3,6 +3,9 @@
 ## Introduction
 
 **pico-pacPlus** is an Odyssey 2 / VideoPac+ (G7400) emulator for Raspberry Pi Pico, Pico 2, and other RP2040/RP2350-based microcontrollers. It is based on the [O2EM](https://sourceforge.net/projects/o2em/) emulator by Daniel Boris, Andre de la Rocha, and LABBE Corentin, ported to the Raspberry Pi Pico platform with SD card support, an on-screen menu system, and HDMI video output.
+| | |
+|-----|-----|
+| <img alt="Screenshot 2026-07-02 16-31-27" src="https://github.com/user-attachments/assets/f056ad3d-8a29-4955-9451-97eaac7ffc91" />    |  <img alt="Screenshot 2026-07-02 16-31-46" src="https://github.com/user-attachments/assets/4cf6b178-cedf-438a-b2be-506193192d8e" /> |
 
 ### Features
 
@@ -43,6 +46,7 @@ A metadata pack can be downloaded from the [releases page](https://github.com/fh
 ├── images/   (box art, named by ROM CRC32)
 └── descr/    (text descriptions, named by ROM CRC32)
 ```
+<img width="1920" height="1080" alt="Screenshot 2026-07-02 16-31-19" src="https://github.com/user-attachments/assets/4885c1a3-555f-4ee8-a8cb-1d2a3a4c935f" />
 
 ### Project Information
 
@@ -61,32 +65,6 @@ There are also emulator ports for other systems using the same hardware platform
 ## Possible configurations
 
 For detailed instructions on all possible hardware configurations, wiring diagrams, pinouts, flashing instructions, PCB designs, 3D-printed cases, and board-specific setup, please refer to the **[pico-infonesPlus README](https://github.com/fhoedemakers/pico-infonesPlus/blob/main/README.md)**. The hardware setup is identical -- only the firmware (`.uf2` file) is different.
-
-You can use pico-pacPlus with the following RP2040/RP2350 boards and configurations:
-
-- A custom printed circuit board (PCB) designed by [@johnedgarpark](https://twitter.com/johnedgarpark). (requires soldering) Up to two NES controller ports can be added to this PCB. Can also be used with a USB gamecontroller. You can 3D print your own case for the PCB.
-
-- An additional PCB design for Waveshare RP2040 & RP2350 Zero including case design by DynaMight1124 based around cheaper but harder to solder components for those that fancy a bigger challenge. It also allows the design to be smaller.
-
-- [Adafruit Feather RP2040 with DVI](https://www.adafruit.com/product/5710) (HDMI) Output Port. For use with a USB gamecontroller, up to two legacy NES controllers, or even a WII classic controller. Requires an SD card breakout board and breadboard.
-
-- [Waveshare RP2040-PiZero Development Board](https://www.waveshare.com/rp2040-pizero.htm). For use with a USB gamecontroller, up to two legacy NES controllers, or a WII classic controller. (No soldering required)
-
-- [Waveshare RP2350-PiZero Development Board](https://www.waveshare.com/rp2350-pizero.htm). Supports the optional PSRAM chip.
-
-- [Adafruit Metro RP2350](https://www.adafruit.com/product/6003). Supports the optional PSRAM chip.
-
-- [Pimoroni Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2?variant=42092668289107). Use the breadboard config. Works also on the discontinued Pimoroni Pico DV Demo base.
-
-- [Adafruit Fruit Jam](https://www.adafruit.com/product/6200). No additional hardware is required apart from a USB gamepad. Audio is output through the monitor or the included speaker, with the option to connect external speakers and a Wii Classic controller via Stemma QT.
-
-- [SpotPear HDMI](https://spotpear.com/index/product/detail/id/1207.html)
-
-- [Murmulator M1 and M2 boards](https://murmulator.ru)
-
-- (Discontinued) [Pimoroni Pico DV Demo Base](https://shop.pimoroni.com/products/pimoroni-pico-dv-demo-base?variant=39494203998291). For use with a Raspberry Pi Pico, Pico 2, or Pimoroni Pico Plus 2.
-
-- Raspberry Pi Pico or Pico 2 with [Adafruit DVI Breakout](https://www.adafruit.com/product/4984) and [Adafruit Micro-SD breakout board+](https://www.adafruit.com/product/254) on a breadboard. For use with a USB gamecontroller or up to two legacy NES controllers. (No soldering required)
 
 ***
 
