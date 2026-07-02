@@ -25,7 +25,6 @@ This project is part of a family of Raspberry Pi Pico emulator projects:
 ## What it emulates
 
 - **Odyssey 2 / VideoPac cartridges** — Standard Odyssey 2 and Philips VideoPac cartridge dumps (`.bin`) are loaded directly from the SD card.
-- **VideoPac+ / G7400** — Full support for the enhanced G7400 / VideoPac+ with its 16-color extended graphics.
 - **Dual joystick ports with auto-mirroring** — Odyssey 2 games freely choose which port to read (for example, *K.C. Munchkin!* reads port 1, *Alien Invaders* reads port 2). When only one USB gamepad is connected, the emulator automatically mirrors input to both emulated ports so all games work with a single controller. With two USB gamepads connected, each controls its own port for two-player games.
 - **USB keyboard passthrough** — The Odyssey 2 had a built-in membrane keyboard and many games (particularly the educational titles) require keyboard input. A connected USB keyboard is mapped directly onto the Odyssey 2 keyboard matrix.
 - **BIOS** — The Odyssey 2 BIOS (`o2rom.bin`) is loaded from `/bios/` on the SD card. See [BIOS](#bios) below.
@@ -34,7 +33,7 @@ This project is part of a family of Raspberry Pi Pico emulator projects:
 
 ## Setup Overview
 
-1. Prepare an SD card formatted as FAT32 or exFAT.
+1. Prepare an SD card formatted as FAT32 (recommended) or exFAT.
 2. Transfer ROM files (`.bin`) to the card, preferably in `/roms/O2E` (subdirectory organization is supported).
 3. Place BIOS files in `/bios/` on the SD card (see [BIOS](#bios) below).
 4. Optionally install a [metadata pack](#metadata) for box art and descriptions.
@@ -226,7 +225,7 @@ When using Visual Studio Code, choose the Release or the RelWithDebInfo build va
 - **pico_shared**: GNU GPLv3
 - **pico_lib (DVI driver)**: MIT License
 - **tusb_xinput**: MIT License
-
+- **pico_hdmi**: Unlicense license
 ***
 
 ## Credits
