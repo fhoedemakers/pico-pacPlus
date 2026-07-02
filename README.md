@@ -2,7 +2,7 @@
 
 ## Introduction
 
-**pico-pacPlus** is an Odyssey 2 / VideoPac+ (G7400) emulator for RP2040- and RP2350-based microcontrollers. It is based on the [O2EM](https://sourceforge.net/projects/o2em/) emulator core by Daniel Boris and Andre de la Rocha and the [O2EM2](https://music.mzis.net/bin/o2em2/) enhancements by LABBE Corentin, integrated with the video, audio, menu, and SD card framework from [pico-infonesPlus](https://github.com/fhoedemakers/pico-infonesPlus).
+**pico-pacPlus** is an Odyssey 2 / VideoPac (G7000) emulator for RP2040- and RP2350-based microcontrollers. It is based on the [O2EM](https://sourceforge.net/projects/o2em/) emulator core by Daniel Boris and Andre de la Rocha and the [O2EM2](https://music.mzis.net/bin/o2em2/) enhancements by LABBE Corentin, integrated with the video, audio, menu, and SD card framework from [pico-infonesPlus](https://github.com/fhoedemakers/pico-infonesPlus).
 
 | | |
 |-----|-----|
