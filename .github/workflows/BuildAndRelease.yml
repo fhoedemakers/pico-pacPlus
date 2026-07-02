@@ -17,7 +17,7 @@ on:
 
 # Must match the project() name in CMakeLists.txt
 env:
-    APP_NAME: picopacPlus
+    APP_NAME: picoPacPlus
 
 # Allow this workflow to write back to the repository
 permissions:
