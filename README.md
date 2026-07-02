@@ -2,38 +2,81 @@
 
 ## Introduction
 
-**pico-pacPlus** is an Odyssey 2 / VideoPac+ (G7400) emulator for Raspberry Pi Pico, Pico 2, and other RP2040/RP2350-based microcontrollers. It is based on the [O2EM](https://sourceforge.net/projects/o2em/) emulator by Daniel Boris, Andre de la Rocha, and LABBE Corentin, ported to the Raspberry Pi Pico platform with SD card support, an on-screen menu system, and HDMI video output.
+**pico-pacPlus** is an Odyssey 2 / VideoPac+ (G7400) emulator for RP2040- and RP2350-based microcontrollers. It is based on the [O2EM](https://sourceforge.net/projects/o2em/) emulator core by Daniel Boris and Andre de la Rocha and the [O2EM2](https://music.mzis.net/bin/o2em2/) enhancements by LABBE Corentin, integrated with the video, audio, menu, and SD card framework from [pico-infonesPlus](https://github.com/fhoedemakers/pico-infonesPlus).
+
 | | |
 |-----|-----|
-| <img alt="Screenshot 2026-07-02 16-31-27" src="https://github.com/user-attachments/assets/f056ad3d-8a29-4955-9451-97eaac7ffc91" />    |  <img alt="Screenshot 2026-07-02 16-31-46" src="https://github.com/user-attachments/assets/4cf6b178-cedf-438a-b2be-506193192d8e" /> |
+| <img alt="Screenshot 2026-07-02 16-31-27" src="https://github.com/user-attachments/assets/f056ad3d-8a29-4955-9451-97eaac7ffc91" /> | <img alt="Screenshot 2026-07-02 16-31-46" src="https://github.com/user-attachments/assets/4cf6b178-cedf-438a-b2be-506193192d8e" /> |
 
-### Features
+> [!IMPORTANT]
+> Both RP2040 (Pico 1) and RP2350 (Pico 2 and variants) boards are supported. RP2350 is recommended: a few games show minor visual glitches on RP2040.
 
-- **Odyssey 2 / VideoPac Emulation** -- Play Odyssey 2 and VideoPac cartridge ROM files (`.bin`) directly from an SD card
-- **VideoPac+ (G7400) Support** -- Full support for the enhanced G7400 / VideoPac+ with its 16-color extended graphics
-- **SD Card Menu System** -- Browse and launch games from an on-screen menu interface
-- **USB Keyboard Support** -- Full keyboard mapping for games that use the Odyssey 2's built-in keyboard (letters, numbers, and special keys)
-- **Dual Controller Support** -- Two simultaneous controllers; a single USB gamepad automatically mirrors to both emulated joystick ports, since Odyssey 2 games use either port 1 or port 2
-- **BIOS Support** -- Automatically detects and loads the appropriate BIOS for Odyssey 2 or G7400/VideoPac+ systems
-- **Flexible Hardware** -- [Compatible with standard DVI/HDMI breakout boards](#possible-configurations), with optional [custom PCB](#pcb-with-raspberry-pi-pico-or-pico-2) and 3D-printed case designs.
+This project is part of a family of Raspberry Pi Pico emulator projects:
 
-On RP2040 a some games have visual glitches. Runs best on RP2350.
+- NES: [pico-infonesPlus](https://github.com/fhoedemakers/pico-infonesPlus)
+- Sega Master System / Game Gear: [pico-smsplus](https://github.com/fhoedemakers/pico-smsplus)
+- Game Boy / Game Boy Color: [pico-peanutGB](https://github.com/fhoedemakers/pico-peanutGB)
+- Sega Mega Drive / Genesis: [pico-genesisPlus](https://github.com/fhoedemakers/pico-genesisPlus)
+- PC Engine / TurboGrafx-16: [pico-pcePlus](https://github.com/fhoedemakers/pico-pcePlus)
+- Multi-emulator bundle for the [Adafruit Fruit Jam](https://www.adafruit.com/product/6200): [retroJam](https://github.com/fhoedemakers/retroJam)
 
-### Setup Overview
+***
 
-1. Prepare an SD card formatted as FAT32 or exFAT
-2. Copy your Odyssey 2 / VideoPac ROM files (`.bin`) to the card, preferably in /roms/O2E (subdirectory organization is supported)
-3. Copy the required BIOS file(s) to the `/bios/` directory on the SD card (see [BIOS Setup](#bios-setup) below)
-4. Insert the SD card into the device
-5. Use the menu to browse, select, and play games
+## What it emulates
 
-### BIOS Setup
+- **Odyssey 2 / VideoPac cartridges** — Standard Odyssey 2 and Philips VideoPac cartridge dumps (`.bin`) are loaded directly from the SD card.
+- **VideoPac+ / G7400** — Full support for the enhanced G7400 / VideoPac+ with its 16-color extended graphics.
+- **Dual joystick ports with auto-mirroring** — Odyssey 2 games freely choose which port to read (for example, *K.C. Munchkin!* reads port 1, *Alien Invaders* reads port 2). When only one USB gamepad is connected, the emulator automatically mirrors input to both emulated ports so all games work with a single controller. With two USB gamepads connected, each controls its own port for two-player games.
+- **USB keyboard passthrough** — The Odyssey 2 had a built-in membrane keyboard and many games (particularly the educational titles) require keyboard input. A connected USB keyboard is mapped directly onto the Odyssey 2 keyboard matrix.
+- **BIOS** — The Odyssey 2 BIOS (`o2rom.bin`) is loaded from `/bios/` on the SD card. See [BIOS](#bios) below.
 
-The emulator requires a BIOS ROM to run. Place your BIOS file(s) in the `/bios/` directory on the SD card. The emulator will search this directory and auto-detect the BIOS type.
+***
 
-- For **Odyssey 2 / VideoPac** games, use the standard Odyssey 2 BIOS
-- For **VideoPac+ / G7400** games, the G7400 BIOS is needed for enhanced graphics support
+## Setup Overview
 
+1. Prepare an SD card formatted as FAT32 or exFAT.
+2. Transfer ROM files (`.bin`) to the card, preferably in `/roms/O2E` (subdirectory organization is supported).
+3. Place BIOS files in `/bios/` on the SD card (see [BIOS](#bios) below).
+4. Optionally install a [metadata pack](#metadata) for box art and descriptions.
+5. Insert the SD card into the device and use the menu to browse, select, and play games.
+
+***
+
+## Hardware requirements
+
+The emulator runs on both RP2040 and RP2350 boards:
+
+- **RP2040 boards (Pico 1 / Pico W / Waveshare RP2040 boards / etc.)** — Fully supported. Because there is no PSRAM, the selected ROM is first written to flash on launch, which triggers a reboot; startup takes a few seconds. Some titles exhibit minor visual glitches.
+- **RP2350 boards (Pico 2 / Pico 2 W / Waveshare RP2350 boards / Adafruit Metro RP2350 / Adafruit Fruit Jam / etc.)** — Recommended. On boards equipped with PSRAM the ROM is loaded straight into PSRAM and started immediately, without the reboot-and-write step.
+
+For board-by-board wiring, supported display modes, PCB designs, 3D-printed cases, and which UF2 file to flash, refer to the [pico-infonesPlus documentation](https://github.com/fhoedemakers/pico-infonesPlus#setup). The set of supported boards and their pinouts is identical between the two projects — only the firmware (`.uf2` file) differs.
+
+### PSRAM
+
+Some boards support up to 8 MB of PSRAM. When PSRAM is detected the emulator uses it automatically, giving much faster game startup (no flash-and-reboot step).
+
+| Board | PSRAM Included |
+|:--|:--|
+| [Waveshare RP2350-PiZero](https://www.waveshare.com/rp2350-pizero.htm) | No — optional, must be soldered |
+| [Adafruit Metro RP2350 with PSRAM](https://www.adafruit.com/product/6267) | Yes — pre-installed |
+| [Pimoroni Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2) | Yes — pre-installed |
+| [Adafruit Fruit Jam](https://www.adafruit.com/product/6200) | Yes — pre-installed |
+
+***
+
+## BIOS
+
+The emulator requires the Odyssey 2 BIOS to run. The BIOS is not distributed with the emulator; it must be supplied by the user.
+
+### Placement
+
+- Create a `/bios/` folder in the root of the SD card.
+- Place the Odyssey 2 BIOS file there, named exactly `o2rom.bin`.
+
+> [!NOTE]
+> Without `/bios/o2rom.bin` on the SD card, games will fail to load.
+
+***
 
 ## Metadata
 
@@ -46,155 +89,92 @@ A metadata pack can be downloaded from the [releases page](https://github.com/fh
 ├── images/   (box art, named by ROM CRC32)
 └── descr/    (text descriptions, named by ROM CRC32)
 ```
+
 <img width="1920" height="1080" alt="Screenshot 2026-07-02 16-31-19" src="https://github.com/user-attachments/assets/4885c1a3-555f-4ee8-a8cb-1d2a3a4c935f" />
 
-### Project Information
-
-This project is based on [O2EM](https://sourceforge.net/projects/o2em/) (originally by Daniel Boris, continued by Andre de la Rocha) and [O2EM2](https://music.mzis.net/bin/o2em2/) by LABBE Corentin, ported to the Raspberry Pi Pico platform by [@frenskefrens](https://github.com/fhoedemakers).
-
-There are also emulator ports for other systems using the same hardware platform. You can find them here:
-
-- NES (Nintendo Entertainment System): [pico-infonesPlus](https://github.com/fhoedemakers/pico-infonesPlus)
-- Sega Master System / Game Gear: [pico-smsplus](https://github.com/fhoedemakers/pico-smsplus)
-- Nintendo Game Boy / Game Boy Color: [pico-peanutGB](https://github.com/fhoedemakers/pico-peanutGB)
-- Sega Mega Drive / Genesis: [pico-genesisPlus](https://github.com/fhoedemakers/pico-genesisPlus)
-- If you have an [Adafruit Fruit Jam](https://www.adafruit.com/product/6200): See this multi-emulator project: [retroJam](https://github.com/fhoedemakers/retroJam)
-
 ***
 
-## Possible configurations
+## Controls
 
-For detailed instructions on all possible hardware configurations, wiring diagrams, pinouts, flashing instructions, PCB designs, 3D-printed cases, and board-specific setup, please refer to the **[pico-infonesPlus README](https://github.com/fhoedemakers/pico-infonesPlus/blob/main/README.md)**. The hardware setup is identical -- only the firmware (`.uf2` file) is different.
-
-***
-
-## PSRAM
-
-Some boards support additional memory called PSRAM with a capacity of 8MB. On certain boards this comes pre-installed, while on others it is optional and must be soldered manually. When PSRAM is detected, the emulator will automatically make use of it.
-
-Without PSRAM, selecting a game ROM triggers a reboot: the ROM is written to flash memory during startup to prevent the system from locking up. This process is relatively slow, taking several seconds before the game starts.
-
-With PSRAM, games are loaded directly from the SD card into PSRAM and executed immediately, resulting in much faster startup times.
-
-| Board | PSRAM Included |
-|:--|:--|
-| [Waveshare RP2350-PiZero](https://www.waveshare.com/rp2350-pizero.htm) | No -- optional, must be soldered |
-| [Adafruit Metro RP2350 with PSRAM](https://www.adafruit.com/product/6267) | Yes -- pre-installed |
-| [Pimoroni Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2) | Yes -- pre-installed |
-| [Adafruit Fruit Jam](https://www.adafruit.com/product/6200) | Yes -- pre-installed |
-
-***
-
-## Gamecontroller support
-
-Depending on the hardware configuration, the emulator supports the following gamecontrollers. In some configurations, a USB-Y cable is needed to both connect power and a gamecontroller to the USB port.
-
-### USB game controllers
-- Sony DualShock 4
-- Sony DualSense
-- Genesis Mini 1 and 2
-- PlayStation Classic
-- USB Keyboard
-- XInput type of controllers like Xbox 360 and Xbox One controllers and other XInput compatible controllers like 8BitDo
+The emulator presents the Odyssey 2 joystick + keyboard mapping on any connected USB controller, NES controller (directly wired), or Wii Classic Controller (via I²C). Supported USB devices include Sony DualShock 4 / DualSense, Sega Genesis Mini 1 and 2, PlayStation Classic, USB keyboards, and XInput-compatible controllers (Xbox 360, Xbox One, 8BitDo, and similar).
 
 > [!NOTE]
 > There is some input lag when using USB controllers.
 
 ### Legacy controllers
+
 - One or two original NES controllers. In some configurations, soldering is required.
-- WII Classic controller: supported on Adafruit Feather RP2040, WaveShare RP2040/RP2350-PiZero, Adafruit Metro RP2350, and Adafruit Fruit Jam boards.
+- Wii Classic Controller: supported on Adafruit Feather RP2040, WaveShare RP2040/RP2350-PiZero, Adafruit Metro RP2350, and Adafruit Fruit Jam boards.
 
-### About the Odyssey 2 keyboard
+### Button mapping
 
-The Odyssey 2 / VideoPac had a built-in membrane keyboard, and many games require keyboard input (for example, to select game modes, enter names, or play educational titles). When a USB keyboard is connected, the emulator maps standard keyboard keys directly to the Odyssey 2 keyboard matrix:
-
-- Letters A-Z
-- Numbers 0-9
-- Space, Enter, Minus, Equals, Period, Slash
-- Numpad: +, /, *
-
-This makes keyboard-driven games fully playable.
-
-### About two player games
-
-The Odyssey 2 had two joystick ports, and games freely chose which port to read -- for example, *K.C. Munchkin!* reads port 1, while *Alien Invaders* reads port 2. When only one USB gamepad is connected (the common case), the emulator automatically mirrors input to both emulated joystick ports so all games work with a single controller. When two USB gamepads are connected, each controls its own port for true two-player games.
-
-***
-
-## Warning
-
-The emulator overclocks the Pico to 252 MHz in order to get the emulator working fast enough. Overclocking can reduce the Pico's lifespan.
-
-Use this software at your own risk! I will not be responsible in any way for any damage to your Pico and/or connected peripherals caused by using this software.
-
-I also do not take responsibility in any way when damage is caused to the Pico or display due to incorrect wiring or voltages.
-
-***
-
-## Gamepad and keyboard usage
-
-|     | (S)NES | Genesis | XInput | DualShock/Sense |
-| --- | ------ | ------- | ------ | --------------- |
-| Button1 | B  |    A    |   A    |    X            |
-| Button2 | A  |    B    |   B    |   Circle        |
-| Select  | Select | Mode or C | Select | Select   |
+|         | (S)NES | Genesis   | XInput | DualShock/Sense |
+| ------- | ------ | --------- | ------ | --------------- |
+| Button1 | B      | A         | A      | X               |
+| Button2 | A      | B         | B      | Circle          |
+| Select  | Select | Mode or C | Select | Select          |
 
 ### Menu
-Gamepad buttons:
-- UP/DOWN: Next/previous item in the menu
-- LEFT/RIGHT: Next/previous page
-- Button2: Open folder / flash and start game
-- Button1: Back to parent folder
-- SELECT: Opens the settings menu. Here you can change settings like screen mode, scanlines, framerate display, menu colors and other board-specific settings.
 
-When using a USB keyboard:
-- Cursor keys: Up, Down, Left, Right
-- Z: Back to parent folder
-- X: Open folder / flash and start a game
-- A: Acts as the SELECT button
+Gamepad:
 
-### Emulator (in game)
-Gamepad buttons:
-- SELECT + START: Opens the settings menu. From there you can quit the game and return to the SD card menu, or adjust settings and resume.
-- SELECT + UP / SELECT + DOWN: Switch screen modes
-- START + Button2: Toggle framerate display
-- **Pimoroni Pico DV Demo Base only**: SELECT + LEFT: Switch audio output to the connected speakers on the line-out jack.
+- **UP/DOWN**: next / previous item
+- **LEFT/RIGHT**: next / previous page
+- **Button2**: open folder / flash and start game
+- **Button1**: back to parent folder
+- **SELECT**: open the settings menu (screen mode, scanlines, framerate display, menu colors, board-specific settings)
+
+USB keyboard:
+
+- **Cursor keys**: Up / Down / Left / Right
+- **Z**: back to parent folder
+- **X**: open folder / flash and start a game
+- **A**: SELECT
+
+### In game
+
+Gamepad:
+
+- **SELECT + START**: open the settings menu — quit back to the SD card menu, or adjust settings and resume.
+- **SELECT + UP / SELECT + DOWN**: switch screen modes
+- **START + Button2**: toggle framerate display
+- **Pimoroni Pico DV Demo Base only** — SELECT + LEFT: switch audio output to the speakers on the line-out jack.
 - **Fruit Jam only**:
-  - SELECT + UP: Toggle scanlines
-  - Pushbutton 2 (on board) or SELECT + RIGHT: Toggle VU meter on or off
-  - START + LEFT/RIGHT: Adjust volume of built-in speaker and external audio jack
+  - SELECT + UP: toggle scanlines
+  - Pushbutton 2 (on board) or SELECT + RIGHT: toggle VU meter on/off
+  - START + LEFT/RIGHT: adjust volume of the built-in speaker and external audio jack
 
-When using a USB keyboard in-game:
-- Cursor keys: Up, Down, Left, Right
-- A: SELECT
-- S: START
-- Z: Button1
-- X: Button2
-- All letter keys, number keys, and supported special keys are passed through to the Odyssey 2 keyboard matrix for games that require keyboard input.
+USB keyboard in-game:
 
-***
-
-## Known issues and limitations
-
-- This is a work in progress. Not all games may run correctly.
-- Some games may have graphical or audio glitches.
+- **Cursor keys**: Up / Down / Left / Right
+- **A**: SELECT
+- **S**: START
+- **Z**: Button1
+- **X**: Button2
+- All letter keys, number keys, and supported special keys are passed through to the Odyssey 2 keyboard matrix (letters A–Z, digits 0–9, Space, Enter, Minus, Equals, Period, Slash, and numpad `+ / *`), so keyboard-driven games are fully playable.
 
 ***
 
 ## Building from source
 
-Clone the repository and initialize the submodules:
+### Prerequisites
+
+- The [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk), with the `PICO_SDK_PATH` environment variable set.
+- CMake 3.13 or later.
+- The ARM GCC toolchain (and, for RISC-V builds, the RISC-V toolchain in `$PICO_SDK_PATH/toolchain/RISCV_RPI_2_0_0_2/bin`).
+- `picotool` on the `PATH`.
+
+### Clone and build
 
 ```bash
-git clone https://github.com/fhoedemakers/pico-pacPlus.git
+git clone --recurse-submodules https://github.com/fhoedemakers/pico-pacPlus.git
 cd pico-pacPlus
-git submodule update --init
 chmod +x pico_shared/bld.sh buildAll.sh
 ```
 
-To build every supported hardware configuration in one go, run `./buildAll.sh`. It invokes `bld.sh` for each config, puts the resulting `.uf2` files in the `releases/` folder, and prints `picotool info` for each one. Copy the `.uf2` matching your board to your Pico via BOOTSEL.
+Run `./buildAll.sh` to build every supported configuration and collect the resulting UF2 files in the `releases/` folder. Copy the `.uf2` matching your board to your Pico via BOOTSEL.
 
-To build a single configuration, use `bld.sh` (a thin wrapper around `pico_shared/bld.sh`):
+To build a single configuration, use `./bld.sh` (a thin wrapper around `pico_shared/bld.sh`):
 
 ```
 Usage: ./bld.sh [-d] [-2 | -r] [-w] [-u] [-m] [-D] [-e] [-b] [-t path to toolchain] [-p nprocessors] [-c <hwconfig>]
@@ -224,37 +204,63 @@ Options:
      14: Adafruit Feather RP2350 with TLV320DAC3100 I2S DAC, SD card breakout and PIO USB
 ```
 
-When using Visual Studio Code, choose the Release or the RelWithDebugInfo build variant.
+When using Visual Studio Code, choose the Release or the RelWithDebInfo build variant.
+
+> [!WARNING]
+> The emulator overclocks the Pico (to 252 MHz on most configurations) to reach full speed. Overclocking can reduce the Pico's lifespan. Use this software at your own risk — I take no responsibility for any damage to your Pico or connected peripherals, including damage caused by incorrect wiring or voltages.
 
 ***
 
-## Credits
+## Flashing
 
-O2EM is originally programmed by [Daniel Boris](https://sourceforge.net/projects/o2em/) and continued by [Andre de la Rocha](https://sourceforge.net/projects/o2em/). [O2EM2](https://music.mzis.net/bin/o2em2/) is an enhanced version by [LABBE Corentin](https://music.mzis.net/).
-
-Pico port, SD card support, menu system, and platform integration by [@frenskefrens](https://github.com/fhoedemakers).
-
-HSTX HDMI/DVI driver with audio using [pico_hdmi](https://github.com/fliperama86/pico_hdmi) by [fliperama86](https://github.com/fliperama86).
-
-Pico DVI driver by [Shuichi Takano](https://github.com/shuichitakano).
-
-PCB design by [John Edgar Park](https://twitter.com/johnedgarpark).
-
-Additional PCB design and 3D-printable case by [Gavin Knight (DynaMight1124)](https://github.com/DynaMight1124).
-
-NES gamepad and WII Classic controller support contributed by [PaintYourDragon](https://github.com/PaintYourDragon) & [Adafruit](https://github.com/adafruit).
-
-XInput driver: [tusb_XInput](https://github.com/Ryzee119/tusb_XInput) by [Ryzee119](https://github.com/Ryzee119).
-
-FatFS driver: [pico_fatfs](https://github.com/elehobica/pico_fatfs) by [elehobica](https://github.com/elehobica).
-
-[Anthropic Claude Opus 4.6](https://www.anthropic.com/claude/opus) assisted with the Pico port of the O2EM emulator core and general code optimizations.
+1. Hold the **BOOTSEL** button on the Pico while connecting it to a computer via USB.
+2. The board mounts as a USB mass-storage device.
+3. Copy the appropriate `.uf2` file to the device.
+4. The board reboots automatically and starts the emulator.
 
 ***
 
-## Licenses
+## License
 
 - **O2EM / O2EM2 emulator core**: [Clarified Artistic License](o2em2-1.51/LICENSE.TXT)
 - **pico_shared**: GNU GPLv3
 - **pico_lib (DVI driver)**: MIT License
 - **tusb_xinput**: MIT License
+
+***
+
+## Credits
+
+### Emulation core and framework
+
+- [O2EM](https://sourceforge.net/projects/o2em/) — original Odyssey 2 emulator by [Daniel Boris](https://sourceforge.net/projects/o2em/), continued by [Andre de la Rocha](https://sourceforge.net/projects/o2em/).
+- [O2EM2](https://music.mzis.net/bin/o2em2/) — enhanced O2EM fork by [LABBE Corentin](https://music.mzis.net/).
+- [pico-infonesPlus](https://github.com/fhoedemakers/pico-infonesPlus) — shared video, audio, menu, and SD card infrastructure, by Frank Hoedemakers.
+- Pico port, SD card support, menu system, and platform integration by [@frenskefrens](https://github.com/fhoedemakers).
+
+### Video and display
+
+- [PicoDVI](https://github.com/Wren6991/PicoDVI) — DVI output library by Wren6991.
+- [pico_lib](https://github.com/shuichitakano/pico_lib) — PicoDVI driver by [Shuichi Takano](https://github.com/shuichitakano).
+- [pico_hdmi](https://github.com/fliperama86/pico_hdmi) — HSTX HDMI/DVI driver with audio by [fliperama86](https://github.com/fliperama86).
+
+### Storage
+
+- [pico_fatfs](https://github.com/elehobica/pico_fatfs) — FatFs SD card driver by [elehobica](https://github.com/elehobica).
+
+### USB and controllers
+
+- [TinyUSB](https://github.com/hathach/tinyusb) — USB host stack.
+- [Pico-PIO-USB](https://github.com/sekigon-gonnoc/Pico-PIO-USB) — software USB host implementation on PIO, by [sekigon-gonnoc](https://github.com/sekigon-gonnoc), used to expose a second USB port for controllers.
+- [tusb_XInput](https://github.com/Ryzee119/tusb_XInput) — XInput controller driver by [Ryzee119](https://github.com/Ryzee119).
+- NES gamepad and Wii Classic Controller support contributed by [PaintYourDragon](https://github.com/PaintYourDragon) and [Adafruit](https://github.com/adafruit).
+
+### Hardware and assets
+
+- PCB design by [John Edgar Park](https://twitter.com/johnedgarpark).
+- Additional PCB design and 3D-printable case by [Gavin Knight (DynaMight1124)](https://github.com/DynaMight1124).
+- Metadata box art sourced from [odyssey2.info](https://odyssey2.info).
+
+### Contributions and assistance
+
+- [Anthropic Claude Opus](https://www.anthropic.com/claude/opus) assisted with the Pico port of the O2EM emulator core and general code optimizations.
