@@ -1,0 +1,1142 @@
+/*
+ *   O2EM2 Free Odyssey2 / Videopac+ Emulator
+ *
+ *   Created by Daniel Boris <dboris@comcast.net>  (c) 1997, 1998
+ *   Developed by Andre de la Rocha   <adlroc@users.sourceforge.net>
+ *             Arlindo M. de Oliveira <dgtec@users.sourceforge.net>
+ *
+ *   Under development by LABBE Corentin http://o2em2.sourceforge.net
+ *
+ *
+ *
+ *   O2 Video Display Controller emulation
+ */
+/*
+ * memory map
+ *
+ * 0x10h-0x07Fh: vdc_charX, vdc_quadX
+ *
+ * 0x80h-0x09fh: vdc_sprX_shape
+ * 4 sprites of 8x8
+ *
+ *
+ *
+ * */
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include "types.h"
+#include "vmachine.h"
+#include "o2em2.h"
+#include "keyboard.h"
+#include "cset.h"
+#include "timefunc.h"
+#include "cpu.h"
+#include "vpp.h"
+#include "vdc.h"
+#ifdef __O2EM_PICO__
+#include "o2em_pico.h"
+#elif defined(__O2EM_SDL__)
+#include "o2em_sdl.h"
+#else
+#include "allegro.h"
+#endif
+#include "audio.h"
+#include "voice.h"
+#ifdef __O2EM_PICO__
+#include "o2em_pico_callbacks.h"
+extern void *frens_f_malloc(size_t size);
+extern void frens_f_free(void *ptr);
+
+/* RP2040 memory squeeze: pack vscreen at 4bpp (16 O2 colors) and col at
+ * half horizontal resolution (O2 pixels are double-wide; one collision
+ * slot covers a pixel pair). Saves ~76KB SRAM. RP2350 keeps the
+ * straightforward 8-bit / full-width layout. */
+#if PICO_RP2350
+#define VSCREEN_BYTES_PER_LINE (BMPW)
+#define COL_BYTES_PER_LINE     (BMPW)
+#define O2EM_PACK_VSCREEN      0
+#define O2EM_PACK_COL          0
+#else
+#define VSCREEN_BYTES_PER_LINE ((BMPW) / 2)
+#define COL_BYTES_PER_LINE     ((BMPW) / 2)
+#define O2EM_PACK_VSCREEN      1
+#define O2EM_PACK_COL          1
+#endif
+#define VSCREEN_TOTAL_BYTES (VSCREEN_BYTES_PER_LINE * (BMPH))
+#define COL_TOTAL_BYTES     (COL_BYTES_PER_LINE     * (BMPH))
+#endif
+
+
+#define COL_SP0   0x01
+#define COL_SP1   0x02
+#define COL_SP2   0x04
+#define COL_SP3   0x08
+#define COL_VGRID 0x10
+#define COL_HGRID 0x20
+#define COL_VPP   0x40
+#define COL_CHAR  0x80
+
+#define X_START		8
+#define Y_START		24
+
+/* X-offset for visible content inside vscreen.
+ * SDL/Allegro: 10-pixel hidden left border (in doubled coords: 20).
+ * Pico: vscreen IS the display framebuffer. We keep a small X offset
+ * so that sprite/char positioning matches the previous Pico build,
+ * which had +20 in this constant and then extracted the display
+ * window starting at src_x=7 (net display X for hw xpos=8 was 13). */
+#ifdef __O2EM_PICO__
+#define BMP_XOFFS	13
+#else
+#define BMP_XOFFS	20
+#endif
+
+
+static long colortable[2][16]={
+	/* O2 palette */
+	{0x000000, 0x0e3dd4, 0x00981b, 0x00bbd9, 0xc70008, 0xcc16b3, 0x9d8710, 0xe1dee1,
+	 0x5f6e6b, 0x6aa1ff, 0x3df07a, 0x31ffff, 0xff4255, 0xff98ff, 0xd9ad5d, 0xffffff},
+	/* VP+ G7400 palette */
+	{0x000000, 0x0000b6, 0x00b600, 0x00b6b6, 0xb60000, 0xb600b6, 0xb6b600, 0xb6b6b6,
+	 0x494949, 0x4949ff, 0x49ff49, 0x49ffff, 0xff4949, 0xff49ff, 0xffff49, 0xffffff}
+
+};
+
+
+BITMAP *bmp = NULL;
+BITMAP *bmpcache = NULL;
+BITMAP *vppbmp = NULL;
+Byte *col = NULL;
+
+/* Collision buffer */
+#ifndef __O2EM_PICO__
+#ifndef __O2EM_SDL__
+PALETTE colors;
+PALETTE oldcol;
+#else
+SDL_Color colors[256];
+#endif
+#endif
+
+/* The pointer to the graphics buffer.
+ * Pico build: 8-bit indexed color, BMPW*BMPH (320*240) allocated in
+ * regular heap (SRAM). Deliberately NOT in PSRAM: per-pixel writes
+ * during draw_display and the end-of-frame bulk conversion would be
+ * 5-10x slower over PSRAM, dropping fps. The 10/5 hidden-border
+ * layout used by SDL/Allegro is gone; per-pixel writes near the edges
+ * are clipped by mputvid()'s ad-bounds check.
+ * SDL/Allegro build: 8-bit indexed, owned by bmp->dat / bmp->pixels.
+ */
+static Byte *vscreen = NULL;
+
+#ifndef __O2EM_PICO__
+static int cached_lines[MAXLINES];
+#endif
+
+Byte coltab[256];
+
+long clip_low;
+long clip_high;
+
+int wsize;
+
+#ifdef __O2EM_PICO__
+#if HSTX
+static const unsigned short palette_o2[32] = {
+	0x0000, 0x04FA, 0x0263, 0x02FB, 0x6001, 0x6456, 0x4E02, 0x737C,
+	0x2DAD, 0x369F, 0x1FCF, 0x1BFF, 0x7D0A, 0x7E7F, 0x6EAB, 0x7FFF,
+	0x0000, 0x006D, 0x0121, 0x016D, 0x3000, 0x302B, 0x2501, 0x39AE,
+	0x14C6, 0x194F, 0x0DE7, 0x0DEF, 0x3C85, 0x3D2F, 0x3545, 0x3DEF
+};
+static const unsigned short palette_vpp[32] = {
+	0x0000, 0x0016, 0x02C0, 0x02D6, 0x5800, 0x5816, 0x5AC0, 0x5AD6,
+	0x2529, 0x253F, 0x27E9, 0x27FF, 0x7D29, 0x7D3F, 0x7FE9, 0x7FFF,
+	0x0000, 0x000B, 0x0160, 0x016B, 0x2C00, 0x2C0B, 0x2D60, 0x2D6B,
+	0x1084, 0x108F, 0x11E4, 0x11EF, 0x3C84, 0x3C8F, 0x3DE4, 0x3DEF
+};
+#else
+static const unsigned short palette_o2[32] = {
+	0x0000, 0x003D, 0x0091, 0x00BD, 0x0C00, 0x0C1B, 0x0981, 0x0EDE,
+	0x0566, 0x06AF, 0x03F7, 0x03FF, 0x0F45, 0x0F9F, 0x0DA5, 0x0FFF,
+	0x0000, 0x0016, 0x0040, 0x0056, 0x0600, 0x0605, 0x0440, 0x0767,
+	0x0233, 0x0357, 0x0173, 0x0177, 0x0722, 0x0747, 0x0652, 0x0777
+};
+static const unsigned short palette_vpp[32] = {
+	0x0000, 0x000B, 0x00B0, 0x00BB, 0x0B00, 0x0B0B, 0x0BB0, 0x0BBB,
+	0x0444, 0x044F, 0x04F4, 0x04FF, 0x0F44, 0x0F4F, 0x0FF4, 0x0FFF,
+	0x0000, 0x0005, 0x0050, 0x0055, 0x0500, 0x0505, 0x0550, 0x0555,
+	0x0222, 0x0227, 0x0272, 0x0277, 0x0722, 0x0727, 0x0772, 0x0777
+};
+#endif
+const unsigned short *palette_lut = palette_o2;
+int show_fps = 0;
+#endif
+
+static void draw_char(Byte ypos, Byte xpos, Byte chr, Byte col);
+static void draw_quad(Byte ypos, Byte xpos, Byte cp0l, Byte cp0h, Byte cp1l, Byte cp1h, Byte cp2l, Byte cp2h, Byte cp3l, Byte cp3h);
+static void draw_grid();
+void mputvid(unsigned int ad, unsigned int len, Byte d, Byte c);
+
+/*============================================================================*/
+/*============================================================================*/
+void O2EM_HOT_FUNC(draw_region)(){
+	int i;
+
+	if (regionoff == 0xffff)
+		i = (master_clk/(LINECNT - 1) - 5);
+	else
+		i = (master_clk/22+regionoff);
+	i = (snapline(i, VDCwrite[0xA0], 0));
+
+
+	if (app_data.crc == 0xA7344D1F) {
+		i = (master_clk/22+regionoff)+6;
+		i = (snapline(i, VDCwrite[0xA0], 0)+6);
+	}/*Atlantis*/
+
+	if (app_data.crc == 0xD0BC4EE6){
+		i = (master_clk/24+regionoff)-6;
+		i = (snapline(i, VDCwrite[0xA0], 0)+7);
+	}/*Frogger*/
+
+	if (app_data.crc == 0x26517E77) {
+		i = (master_clk/22+regionoff);
+		i = (snapline(i, VDCwrite[0xA0], 0)-5);
+	}/*Comando Noturno*/
+
+	if (app_data.crc == 0xA57E1724) {
+		i = (master_clk/(LINECNT-1)-5);
+		i = (snapline(i, VDCwrite[0xA0], 0)-3);
+	}/*Catch the ball*/
+
+	if (i < 0)
+		i = 0;
+	clip_low = last_line * (long)BMPW;
+	clip_high = i * (long)BMPW;
+	if (clip_high > BMPW * BMPH)
+		clip_high = BMPW * BMPH;
+	if (clip_low < 0)
+		clip_low = 0;
+
+	if (clip_low < clip_high)
+		draw_display();
+	last_line = i;
+}
+
+/*============================================================================*/
+/*============================================================================*/
+/* create color map*/
+void create_cmap()
+{
+	int i;
+#ifdef __O2EM_PICO__
+	palette_lut = app_data.vpp ? palette_vpp : palette_o2;
+#else
+	#ifdef __O2EM_DEBUG__
+	printf("%s\n", __func__);
+	#endif
+	for (i = 0; i < 16; i++) {
+		colors[i+32].r = colors[i].r = (colortable[app_data.vpp?1:0][i] & 0xff0000) >> 18;
+		colors[i+32].g = colors[i].g = (colortable[app_data.vpp?1:0][i] & 0x00ff00) >> 10;
+		colors[i+32].b = colors[i].b = (colortable[app_data.vpp?1:0][i] & 0x0000ff) >> 2;
+	}
+
+	for (i = 16; i < 32; i++) {
+		colors[i+32].r = colors[i].r = colors[i-16].r/2;
+		colors[i+32].g = colors[i].g = colors[i-16].g/2;
+		colors[i+32].b = colors[i].b = colors[i-16].b/2;
+	}
+
+	for (i = 64; i < 256; i++)
+		colors[i].r = colors[i].g = colors[i].b = 0;
+	#ifdef __O2EM_SDL__
+	for (i = 0; i < 256; i++) {
+		colors[i].r *= 4;
+		colors[i].g *= 4;
+		colors[i].b *= 4;
+	}
+	#endif
+#endif
+}
+
+/*============================================================================*/
+/*============================================================================*/
+/* rename this function */
+void grmode()
+{
+	#ifdef __O2EM_DEBUG__
+	printf("%s wsize=%d full=%d %dx%d\n", __func__, app_data.wsize, app_data.fullscreen, WNDW, WNDH);
+	#endif
+	set_color_depth(8);
+	wsize = app_data.wsize;
+	if (app_data.fullscreen) {
+		if (app_data.scanlines) {
+			wsize = 2;
+			#ifdef __O2EM_DEBUG__
+			printf("%s trying 640x480\n", __func__);
+			#endif
+			if (set_gfx_mode(GFX_AUTODETECT_FULLSCREEN, 640, 480, 0, 0)) {
+				wsize = 1;
+				if (set_gfx_mode(GFX_AUTODETECT_FULLSCREEN, 320, 240, 0, 0)) {
+					fprintf(stderr,"Error: could not create screen.\n");
+					o2em_clean_quit(EXIT_FAILURE);
+				}
+			}
+		} else {
+			#ifdef ALLEGRO_DOS
+			wsize = 1;
+			if (set_gfx_mode(GFX_AUTODETECT_FULLSCREEN, 320, 240, 0, 0)){
+				wsize = 2;
+				if (set_gfx_mode(GFX_AUTODETECT_FULLSCREEN, 640, 480, 0, 0)){
+					fprintf(stderr,"Error: could not create screen.\n");
+					o2em_clean_quit(EXIT_FAILURE);
+				}
+			}
+			#else
+			wsize = 2;
+			#ifdef __O2EM_DEBUG__
+			printf("%s trying 640x480\n", __func__);
+			#endif
+			if (set_gfx_mode(GFX_AUTODETECT_FULLSCREEN, 640, 480, 0, 0)){
+				wsize = 1;
+				printf("%s trying 320x240\n", __func__);
+				if (set_gfx_mode(GFX_AUTODETECT_FULLSCREEN, 320, 240, 0, 0)){
+					fprintf(stderr,"Error: could not create screen.\n");
+					o2em_clean_quit(EXIT_FAILURE);
+				}
+			}
+			#endif
+		}
+	} else {
+		#ifdef __O2EM_DEBUG__
+		printf("%s trying %dx%d\n", __func__, WNDW*wsize, WNDH*wsize);
+		#endif
+		if (set_gfx_mode(GFX_AUTODETECT_WINDOWED, WNDW*wsize, WNDH*wsize, 0, 0)){
+			wsize = 2;
+			if (set_gfx_mode(GFX_AUTODETECT_WINDOWED, WNDW*2, WNDH*2, 0, 0)){
+				if (set_gfx_mode(GFX_AUTODETECT, WNDW*2, WNDH*2, 0, 0)){
+					fprintf(stderr, "Error: could not create window. %s\n", allegro_error);
+					o2em_clean_quit(EXIT_FAILURE);
+				}
+			}
+			#ifndef ALLEGRO_DOS
+			printf("Could not set the requested window size\n");
+			#endif
+		}
+	}
+
+	if ((app_data.scanlines) && (wsize == 1)) {
+		#ifndef ALLEGRO_DOS
+		printf("Could not set scanlines\n");
+		#endif
+	}
+
+	set_palette(colors);
+	set_window_title(app_data.window_title);
+	clearscr();
+	set_display_switch_mode(SWITCH_PAUSE);
+
+}
+
+/*============================================================================*/
+/*============================================================================*/
+void set_textmode()
+{
+	#ifndef __O2EM_SDL__
+	set_palette(oldcol);
+	set_gfx_mode(GFX_TEXT, 0, 0, 0, 0);
+	if (new_int)
+		Set_Old_Int9();
+	#endif
+}
+
+/*============================================================================*/
+/*============================================================================*/
+void clearscr()
+{
+	acquire_screen();
+	clear(screen);
+	release_screen();
+	clear(bmpcache);
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+/* d is color, what a good variable name!!
+ * c is COL_HGRID(0x20 or COL_CHAR(0x80) or 8
+ * */
+void O2EM_HOT_FUNC(mputvid)(unsigned int ad, unsigned int len, Byte d, Byte c)
+{
+	unsigned int i;
+	if (len >= sizeof(coltab)) return;
+	if (c >= sizeof(coltab)) return;
+	if ((ad > (unsigned long)clip_low) && (ad < (unsigned long)clip_high)) {
+		for (i = 0; i < len; i++) {
+			if (ad >= BMPW * BMPH) break;
+#if defined(__O2EM_PICO__) && O2EM_PACK_VSCREEN
+			/* 4bpp pack: low nibble = even ad, high nibble = odd ad */
+			{
+				unsigned int bi = ad >> 1;
+				Byte b = vscreen[bi];
+				Byte v = d & 0x0f;
+				vscreen[bi] = (ad & 1) ? ((b & 0x0f) | (v << 4)) : ((b & 0xf0) | v);
+			}
+#else
+			vscreen[ad] = d;
+#endif
+#if defined(__O2EM_PICO__) && O2EM_PACK_COL
+			/* Half-width col: one slot per O2 pixel pair (idempotent on
+			 * pair-aligned writes; odd-aligned writes from sproff=1 sprites
+			 * still OR into the surrounding pair, slightly widening
+			 * collision but never missing one). */
+			col[ad >> 1] |= c;
+			coltab[c] |= col[ad >> 1];
+			ad++;
+#else
+			col[ad] |= c;
+			coltab[c] |= col[ad++];
+#endif
+		}
+	}
+}
+
+/*============================================================================*/
+/*============================================================================*/
+static void O2EM_HOT_FUNC(draw_grid)()
+{
+	unsigned int pnt, pn1;
+	Byte mask, d;
+	int j, i, x, w;
+	Byte color;
+
+	if (VDCwrite[0xA0] & 0x40) {
+		for(j = 0; j < 9; j++) {
+			pnt = (((j * 24) + 24) * BMPW);
+			for (i = 0; i < 10; i++) {
+				pn1 = pnt + (i * 32) + BMP_XOFFS;
+				color = ColorVector[j*24+24];
+				mputvid(pn1, 4, (color & 0x07) | ((color & 0x40) >> 3) | (color & 0x80 ? 0 : 8), COL_HGRID);
+				color = ColorVector[j*24+25];
+				mputvid(pn1+BMPW, 4, (color & 0x07) | ((color & 0x40) >> 3) | (color & 0x80 ? 0 : 8), COL_HGRID);
+				color = ColorVector[j*24+26];
+				mputvid(pn1+BMPW*2, 4, (color & 0x07) | ((color & 0x40) >> 3) | (color & 0x80 ? 0 : 8), COL_HGRID);
+			}
+		}
+	}
+
+	mask=0x01;
+	for(j=0; j<9; j++) {
+		pnt = (((j*24)+24) * BMPW);
+		for (i=0; i<9; i++) {
+			pn1 = pnt + (i * 32) + BMP_XOFFS;
+			if ((pn1+BMPW*3 >= (unsigned long)clip_low) && (pn1 <= (unsigned long)clip_high)) {
+				d=VDCwrite[0xC0 + i];
+				if (j == 8) {
+					d=VDCwrite[0xD0+i];
+					mask=1;
+				}
+				if (d & mask)	{
+					color = ColorVector[j*24+24];
+					mputvid(pn1, 36, (color & 0x07) | ((color & 0x40) >> 3) | (color & 0x80 ? 0 : 8), COL_HGRID);
+					color = ColorVector[j*24+25];
+					mputvid(pn1+BMPW, 36, (color & 0x07) | ((color & 0x40) >> 3) | (color & 0x80 ? 0 : 8), COL_HGRID);
+					color = ColorVector[j*24+26];
+					mputvid(pn1+BMPW*2, 36, (color & 0x07) | ((color & 0x40) >> 3) | (color & 0x80 ? 0 : 8), COL_HGRID);
+				}
+			}
+		}
+		mask = mask << 1;
+	}
+
+	mask = 0x01;
+	w = 4;
+	if (VDCwrite[0xA0] & 0x80) w=32;
+	for(j=0; j<10; j++) {
+		pnt = (j*32);
+		mask = 0x01;
+		d = VDCwrite[0xE0 + j];
+		for (x=0; x<8; x++) {
+			pn1 = pnt + (((x*24)+24) * BMPW) + BMP_XOFFS;
+			if (d & mask) {
+				for(i=0; i<24; i++) {
+					if ((pn1 >= (unsigned long)clip_low) && (pn1 <= (unsigned long)clip_high)) {
+						color = ColorVector[x*24+24+i];
+						mputvid(pn1, w, (color & 0x07) | ((color & 0x40) >> 3) | (color & 0x80 ? 0 : 8), COL_VGRID);
+					}
+					pn1+=BMPW;
+				}
+			}
+			mask = mask << 1;
+		}
+	}
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+#if !defined(__O2EM_SDL__) && !defined(__O2EM_PICO__)
+unsigned char *get_raw_pixel_line(BITMAP *pSurface, int y) {
+	if (pSurface == NULL) {
+		fprintf(stderr, "%s Error surface is NULL\n", __func__);
+		return NULL;
+	}
+	if (y < 0) {
+		fprintf(stderr, "%s Error y < 0\n", __func__);
+		return NULL;
+	}
+	return pSurface->line[y];
+}
+#endif
+
+
+/*============================================================================*/
+/*============================================================================*/
+void O2EM_HOT_FUNC(finish_display)()
+{
+#ifdef __O2EM_PICO__
+	/* VPP overlay is stubbed on Pico (see vpp.c). Hand off the full
+	 * vscreen to the platform layer which converts 8-bit indexed
+	 * pixels to the display format and writes them to the display
+	 * driver in one shot. */
+	o2em_render_frame(vscreen, col, BMPW, BMPH, palette_lut, app_data.vpp);
+	return;
+#else
+	int x, y, sn;
+	static int cache_counter = 0;
+	static long index = 0;
+	static unsigned long fps_last = 0, t = 0, curr = 0;
+	#ifdef __O2EM_SDL__
+	SDL_Surface *screen_resize;
+	SDL_Rect dest_rect;
+	#endif
+
+	vpp_finish_bmp(vscreen, 9, 5, BMPW - 9, BMPH - 5, bmp->w, bmp->h);
+	#ifdef __O2EM_SDL__
+	SDL_SaveBMP(vppbmp, "testvpp.bmp");
+	#endif
+
+	/* calculate FPS */
+	if (app_data.show_fps == 1) {
+		if (fps_last <= 0)
+			fps_last = gettimeticks();
+		index++;
+		t = gettimeticks();
+		if (t == fps_last)/* a simple anti division by 0 */
+			t++;
+		/* each 2s we calculate the real fps*/
+		if (t > fps_last + 2 * TICKSPERSEC) {
+			curr = index * TICKSPERSEC / (t - fps_last) / 2;
+			index  = 0;
+			fps_last = t;
+		}
+		textprintf_ex(bmp, font, 20 , 4, 7, 0, "FPS: %4ld", curr);
+	}
+	/* TODO with actual SDL port, cache is useless
+	 * If line y of bmp and bmpcache is identical we will do nothing
+	 * if not we copy that line from bmp to bmpcache
+	 * */
+	for (y = 0; y < bmp->h; y++){
+		cached_lines[y] = !memcmp(get_raw_pixel_line(bmpcache, y),
+				get_raw_pixel_line(bmp, y), bmp->w);
+		if (!cached_lines[y])
+			memcpy(get_raw_pixel_line(bmpcache, y), get_raw_pixel_line(bmp, y), bmp->w);
+	}
+
+	for (y = 0; y < 10; y++)
+		cached_lines[(y + cache_counter) % bmp->h] = 0;
+	cache_counter = (cache_counter + 10) % bmp->h;
+
+	acquire_screen();
+
+	sn = ((wsize > 1) && (app_data.scanlines)) ? 1 : 0;
+
+	for (y = 0; y < WNDH; y++){
+		if (!cached_lines[y + 2])
+			stretch_blit(bmp, screen,
+					7, 2 + y,
+					WNDW, 1,
+					0, y * wsize,
+					WNDW * wsize, wsize - sn);
+	}
+
+	if (sn) {
+		printf("DEBUG snapline\n");
+		for (y = 0; y < WNDH; y++) {
+			if (!cached_lines[y + 2]) {
+				for (x = 0; x < bmp->w; x++) {
+					#ifndef __O2EM_SDL__
+					bmp->line[y + 2][x] += 16;
+					#else
+					*get_raw_pixel(bmp, x, y + 2) += 16;
+					#endif
+				}
+				stretch_blit(bmp, screen, 7, 2 + y, WNDW, 1, 0, (y + 1) * wsize - 1, WNDW * wsize, 1);
+				#ifndef __O2EM_SDL__
+				memcpy(bmp->line[y+2], bmpcache->line[y+2], bmp->w);
+				#else
+				memcpy(get_raw_pixel_line(bmp, y + 2), get_raw_pixel_line(bmpcache, y + 2), bmp->w);
+				#endif
+			}
+		}
+	}
+/*       for (i = 0; i < 300 * 200; i++)
+       *((unsigned char *)bmp->pixels + i) = rand()%254;*/
+	/* TODO temp*/
+	/*stretch_blit(bmp, screen, 7, 2, WNDW, WNDH, 0, 0, WNDW, WNDH);*/
+	#ifdef __O2EM_SDL__
+	clear(screen);
+	/*SDL_SaveBMP(bmp, "bmpout.bmp");*/
+	screen_resize = rotozoomSurface(bmp, 0, wsize, 0);
+	/*SDL_SaveBMP(screen_resize, "screen_resize.bmp");*/
+	dest_rect.x = 0;
+	dest_rect.y = 0;
+	dest_rect.w = WNDW;
+	dest_rect.h = WNDH;
+	SDL_BlitSurface(screen_resize, NULL, screen, &dest_rect);
+	SDL_FreeSurface(screen_resize);
+	/*SDL_SaveBMP(screen, "bmpscreen.bmp");*/
+	#endif
+	release_screen();
+#endif /* !__O2EM_PICO__ */
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+void clear_collision()
+{
+/*	printf("%s()\n", __func__);*/
+	load_colplus(col);
+	coltab[0x01] = coltab[0x02] = 0;
+	coltab[0x04] = coltab[0x08] = 0;
+	coltab[0x10] = coltab[0x20] = 0;
+	coltab[0x40] = coltab[0x80] = 0;
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+void O2EM_HOT_FUNC(draw_display)()
+{
+	int i, j, x, sm, t;
+	Byte y, b, d1, cl, c;
+
+	unsigned int pnt, pnt2;
+	if (BMPW < 0 || vscreen == NULL) {
+		fprintf(stderr, "%s error\n", __func__);
+		return;
+	}
+
+	for (i = clip_low/BMPW; i < clip_high/BMPW; i++) {
+		Byte bg = ((ColorVector[i] & 0x38) >> 3) | (ColorVector[i] & 0x80 ? 0 : 8);
+#if defined(__O2EM_PICO__) && O2EM_PACK_VSCREEN
+		memset(vscreen + i * VSCREEN_BYTES_PER_LINE, (bg & 0x0f) | ((bg & 0x0f) << 4), VSCREEN_BYTES_PER_LINE);
+#else
+		memset(vscreen + i * BMPW, bg, BMPW);
+#endif
+	}
+
+	if (VDCwrite[0xA0] & 0x08)/* 0xA0 Bit 3 If this bit is 1 the grid is displayed. */
+		draw_grid();
+
+	if (useforen && (!(VDCwrite[0xA0] & 0x20))) /* if bit 5 of 0xA0 is not set, dont display chars and quad*/
+		return;
+
+	/* 010h-07Fh: vdc_charX, vdc_quadX http://soeren.informationstheater.de/g7000/hardware.html
+	 * Every char (and sub-quad) has a set of 4 control registers.
+	 * Char control 0 	This register holds the Y position of the char.
+	 * Char control 1 	This registers holds the X position of the char.
+	 * Char control 2 	This register holds the lowest 8 bits of the charset pointer.
+	 * Char control 3 	This register is used bitwise.
+	 *  Bit 0 	This is bit 8 of the charset pointer, the highest bit.
+	 *  Bit 1 	This bit is the red component for the char color.
+	 *  Bit 2 	This bit is the green component for the char color.
+	 *  Bit 3 	This bit is the blue component for the char color.
+	 * */
+	for (i = 0x10; i < 0x40; i += 4)
+		draw_char(VDCwrite[i],VDCwrite[i+1],VDCwrite[i+2],VDCwrite[i+3]);
+
+	/* draw quads, position mapping happens in ext_write (vmachine.c)*/
+	for(i = 0x40; i < 0x80; i+= 0x10)
+		draw_quad(VDCwrite[i], VDCwrite[i+1], VDCwrite[i+2], VDCwrite[i+3],
+				VDCwrite[i+6], VDCwrite[i+7],
+				VDCwrite[i+10], VDCwrite[i+11],
+				VDCwrite[i+14], VDCwrite[i+15]);
+
+	/* draw sprites*/
+	c = 8;/* what is 8*/
+	for (i = 12; i >= 0; i -= 4) {
+		pnt2 = 0x80 + (i * 2);
+		y = VDCwrite[i];
+		x = VDCwrite[i + 1] - 8; /* This registers holds the 8 highest bits of the X position.*/
+		t = VDCwrite[i + 2];
+		cl = ((t & 0x38) >> 3);/* 0x38 is 111000*/
+		cl = ((cl&2) | ((cl&1)<<2) | ((cl&4)>>2)) + 8;
+		/*174*/
+		if ((x < 164) && (y > 0) && (y < 232)) { /*TODO why 164 0 and 232 ?*/
+			pnt = y * BMPW + (x * 2) + BMP_XOFFS + sproff;
+			if (t & 4) { /*bit 2 If this bit is 1 the size of the sprite doubles*/
+				if ((pnt+BMPW*32 >= (unsigned long)clip_low) && (pnt <= (unsigned long)clip_high)) {
+					for (j=0; j<8; j++) {
+						sm = (((j%2==0) && (((t>>1) & 1) != (t & 1))) || ((j%2==1) && (t & 1))) ? 1 : 0;
+						d1 = VDCwrite[pnt2++];
+						for (b=0; b<8; b++) {
+							if (d1 & 0x01) {
+								if ((x+b+sm < 159) && (y+j < 247)) {
+									mputvid(sm+pnt,4,cl,c);
+									mputvid(sm+pnt+BMPW,4,cl,c);
+									mputvid(sm+pnt+2*BMPW,4,cl,c);
+									mputvid(sm+pnt+3*BMPW,4,cl,c);
+								}
+							}
+							pnt += 4;
+							d1 = d1 >> 1;
+						}
+						pnt += BMPW*4-32;
+					}
+				}
+			} else {/* bit 2 is 0 normal sprite size*/
+				if ((pnt + BMPW * 16 >= (unsigned long)clip_low) && (pnt <= (unsigned long)clip_high)) {
+					for (j = 0; j < 8; j++) {
+						sm = (((j%2==0) && (((t>>1) & 1) != (t & 1))) || ((j%2==1) && (t & 1))) ? 1 : 0;
+						d1 = VDCwrite[pnt2++];
+						for (b = 0; b < 8; b++) {
+							if (d1 & 0x01) {
+								if ((x+b+sm<160) && (y+j<249)) {
+									mputvid(sm + pnt, 2, cl, c);
+									mputvid(sm + pnt + BMPW, 2, cl, c);
+								}
+							}
+							pnt += 2;
+							d1 = d1 >> 1;
+						}
+						pnt += BMPW * 2 - 16;
+					}
+				}
+			}
+		}
+		c = c >> 1;
+	}
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+/*
+ * chr = This register holds the lowest 8 bits of the charset pointer.
+ * col bit 0 = This is bit 8 of the charset pointer, the highest bit.
+ * */
+void O2EM_HOT_FUNC(draw_char)(Byte ypos, Byte xpos, Byte chr, Byte col)
+{
+	int j, c;
+	Byte cl, d1;
+	int y, b, n;
+	unsigned int pnt;
+
+	y = (ypos & 0xFE);
+	pnt = y * BMPW + ((xpos - 8) * 2) + BMP_XOFFS;
+	#ifdef VIDEO_DEBUG
+	/*printf("ypos=%d xpos=%d chr=%d col=%d pnt=%d\n", ypos, xpos, chr, col, pnt);*/
+	#endif
+
+	ypos = ypos >> 1;
+	n = 8 - (ypos % 8) - (chr % 8);
+	if (n < 3)
+		n = n + 7;
+
+	if ((pnt+BMPW*2*n >= (unsigned long)clip_low) && (pnt <= (unsigned long)clip_high)) {
+		c = (int)chr + ypos;
+		if (col & 0x01)
+			c += 256;
+		if (c > 511)
+			c -= 512;
+
+		cl = ((col & 0x0E) >> 1);/* mask 1110 = get only bit 1,2,3 (color bits)*/
+		cl = ((cl&2) | ((cl&1)<<2) | ((cl&4)>>2)) + 8;
+
+		if ((y>0) && (y<232) && (xpos<157)) {
+			for (j=0; j<n; j++) {
+				d1 = cset[c+j];
+				for (b=0; b<8; b++) {
+					if (d1 & 0x80) {
+						if ((xpos-8+b < 160) && (y+j < 240)) {
+							mputvid(pnt, 2, cl, COL_CHAR);
+							mputvid(pnt + BMPW, 2, cl, COL_CHAR);
+						}
+					}
+					pnt+=2;
+					d1 = d1 << 1;
+				}
+				pnt += BMPW*2-16;
+			}
+		}
+	}
+}
+
+/* This quad drawing routine can display the quad cut off effect used in KTAA.
+ * It needs more testing with other games, especially the clipping.
+ * This code is quite slow and needs a rewrite by somebody with more experience
+ * than I (sgust) have */
+
+void O2EM_HOT_FUNC(draw_quad)(Byte ypos, Byte xpos, Byte cp0l, Byte cp0h, Byte cp1l, Byte cp1h, Byte cp2l, Byte cp2h, Byte cp3l, Byte cp3h)
+{
+	/* char set pointers */
+	int chp[4];
+	/* colors */
+	Byte col[4];
+	/* pointer into screen bitmap */
+	unsigned int pnt;
+	/* offset into current line */
+	unsigned int off;
+	/* loop variables */
+	int i, j, lines;
+
+	/* get screen bitmap position of quad */
+	pnt = (ypos & 0xfe) * BMPW + ((xpos - 8) * 2) + BMP_XOFFS;
+	/* abort drawing if completely below the bottom clip */
+	if (pnt > (unsigned long) clip_high) return;
+	/* extract and convert char-set offsets */
+	chp[0] = cp0l | ((cp0h & 1) << 8);
+	chp[1] = cp1l | ((cp1h & 1) << 8);
+	chp[2] = cp2l | ((cp2h & 1) << 8);
+	chp[3] = cp3l | ((cp3h & 1) << 8);
+	for(i = 0; i < 4; i++) chp[i] = (chp[i] + (ypos >> 1)) & 0x1ff;
+	lines = 8 - (chp[3]+1) % 8;
+	/* abort drawing if completely over the top clip */
+	if (pnt+BMPW*2*lines < (unsigned long) clip_low) return;
+	/* extract and convert color information */
+	col[0] = (cp0h & 0xe) >> 1;
+	col[1] = (cp1h & 0xe) >> 1;
+	col[2] = (cp2h & 0xe) >> 1;
+	col[3] = (cp3h & 0xe) >> 1;
+	for(i = 0; i < 4; i++) col[i] = ((col[i] & 2) | ((col[i] & 1) << 2) | ((col[i] & 4) >> 2)) + 8;
+	/* now draw the quad line by line controlled by the last quad */
+	while(lines-- > 0) {
+		off = 0;
+		/* draw all 4 sub-quads */
+		for(i = 0; i < 4; i++) {
+			/* draw sub-quad pixel by pixel, but stay in same line */
+			for(j = 0; j < 8; j++) {
+				if((cset[chp[i]] & (1 << (7-j))) && (off < BMPW)) {
+					mputvid(pnt+off, 2, col[i], COL_CHAR);
+					mputvid(pnt+off+BMPW, 2, col[i], COL_CHAR);
+				}
+				/* next pixel */
+				off += 2;
+			}
+			/* space between sub-quads */
+			off += 16;
+		}
+		/* advance char-set pointers */
+		for(i = 0; i < 4; i++) chp[i] = (chp[i]+1) & 0x1ff;
+		/* advance screen bitmap pointer */
+		pnt += BMPW*2;
+	}
+}
+
+/*============================================================================*/
+/*============================================================================*/
+void close_display()
+{
+#ifdef __O2EM_PICO__
+	if (vscreen) { free(vscreen); vscreen = NULL; }
+	if (col) { frens_f_free(col); col = NULL; }
+#else
+	/*
+	free(vscreen);
+	free(col);
+	*/
+#endif
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+void window_close_hook()
+{
+	key_debug = 0;
+	key_done = 1;
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+static void txtmsg(int x, int y, int c, const char *s){
+	/*text_mode(-1);*/
+	textout_centre_ex(bmp, font, s, x + 1, y + 1, 32, -1);
+	textout_centre_ex(bmp, font, s, x , y, c, -1);
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+/* used oly by about()*/
+void display_bg()
+{/* TODO why theses numbers ==> DEFINE*/
+	rectfill(bmp, 20, 72, 311, 172, 9 + 32);
+	line(bmp, 20, 72, 311, 72, 15 + 32);
+	line(bmp, 20, 72, 20, 172, 15 + 32);
+	line(bmp, 21, 172, 311, 172, 1 + 32);
+	line(bmp, 311, 172, 311, 72, 1 + 32);
+}
+
+/*============================================================================*/
+/*============================================================================*/
+void about()
+{
+	char *ver;
+	char exitstr[80];
+
+	int i = 0;
+	while (syskeys[1] != keybtab[i].keybcode)
+		i++;
+
+	strcpy (exitstr, "Press ");
+	strcat (exitstr, keybtab[i].keybname);
+	strcat (exitstr, " to continue");
+
+
+#if defined(ALLEGRO_WINDOWS)
+	ver = "Windows version";
+#elif defined(ALLEGRO_DOS)
+	ver = "DOS version";
+#elif defined(ALLEGRO_LINUX)
+	ver = "Linux version";
+#elif defined(ALLEGRO_BEOS)
+	ver = "BEOS version";
+#elif defined(ALLEGRO_QNX)
+	ver = "QNX version";
+#elif defined(ALLEGRO_UNIX)
+	ver = "UNIX version";
+#elif defined(ALLEGRO_MPW)
+	ver = "MacOS version";
+#else
+	ver = "Unknown platform";
+#endif
+	display_bg();
+	txtmsg(166, 76, 15 + 32,"O2EM2 v" O2EM_VERSION "  " RELEASE_DATE);
+	txtmsg(166, 90, 15 + 32,"Free Odyssey2 / VP+ Emulator");
+	txtmsg(166, 104, 15 + 32, ver);
+	txtmsg(166, 118, 15 + 32, "Developed by Andre de la Rocha");
+	txtmsg(168, 132, 15 + 32, "and Arlindo M. de Oliveira");
+	txtmsg(166, 148, 15 + 32, "Copyright 1996/1998 by Daniel Boris");
+	txtmsg(166, 162, 15 + 32, exitstr);
+	finish_display();
+}
+
+
+/*============================================================================*/
+/*============================================================================*/
+void display_msg(char *msg, int waits)
+{
+	mute_audio();
+	mute_voice();
+	rectfill(bmp,60,72,271,90,9+32);
+	line(bmp,60,72,271,72,15+32);
+	line(bmp,60,72,60,90,15+32);
+	line(bmp,61,90,271,90,1+32);
+	line(bmp,271,90,271,72,1+32);
+	txtmsg(166,76,15+32,msg);
+	finish_display();
+	rest(waits * 100);
+	init_sound_stream();
+}
+
+/*============================================================================*/
+/*============================================================================*/
+int init_display() {
+#ifdef __O2EM_PICO__
+	create_cmap();
+	/* vscreen MUST be in SRAM: per-scanline memset() (bg fill) and the
+	 * end-of-frame conversion read/write the whole buffer, both of
+	 * which are too slow over PSRAM (drops fps to ~40 on Fruit Jam).
+	 *
+	 * col can live in PSRAM (frens_f_malloc) - it is only touched
+	 * per-pixel inside mputvid() on actual sprite/char/grid draws,
+	 * not in the bg memset path, so the PSRAM hit is small. On boards
+	 * without PSRAM frens_f_malloc transparently falls back to SRAM. */
+	if (vscreen == NULL)
+		vscreen = (Byte *)malloc(VSCREEN_TOTAL_BYTES);
+	if (col == NULL)
+		col = (Byte *)frens_f_malloc(COL_TOTAL_BYTES);
+	if (vscreen == NULL || col == NULL) {
+		fprintf(stderr, "init_display: failed to allocate vscreen/col\n");
+		return O2EM_FAILURE;
+	}
+	memset(vscreen, 0, VSCREEN_TOTAL_BYTES);
+	memset(col, 0, COL_TOTAL_BYTES);
+	return O2EM_SUCCESS;
+#else
+	#ifdef __O2EM_DEBUG__
+	printf("%s\n", __func__);
+	#endif
+	#ifndef __O2EM_SDL__
+	get_palette(oldcol);
+	#endif
+	create_cmap();
+	if (BMPW * BMPH == 0) {
+		fprintf(stderr, "BMPW * BMPH == 0\n");
+		o2em_clean_quit(EXIT_FAILURE);
+	}
+	bmp = create_bitmap(BMPW, BMPH);
+	if (bmp == NULL) {
+		fprintf(stderr, "Could not allocate memory for screen buffer.\n");
+		return O2EM_FAILURE;
+	}
+	bmpcache = create_bitmap(BMPW, BMPH);
+	if (bmpcache == NULL) {
+		fprintf(stderr, "Could not allocate memory for screen buffer.\n");
+		return O2EM_FAILURE;
+	}
+	#ifndef __O2EM_SDL__
+	vscreen = (Byte *) bmp->dat;
+	#else
+	vscreen = (Byte *) bmp->pixels;
+	#endif
+	clear(bmp);
+	clear(bmpcache);
+	col = (Byte *)malloc(BMPW * BMPH);
+	#ifdef __O2EM_MEM_DEBUG__
+	printf("MALLOC/FREE DEBUG malloc col %d\n", BMPW * BMPH);
+	#endif
+	if (col == NULL) {
+		fprintf(stderr, "Could not allocate memory for collision buffer.\n");
+		o2em_clean_quit(EXIT_FAILURE);
+	}
+	memset(col, 0, BMPW * BMPH);
+	if (!app_data.debug) {
+		grmode();
+	}
+	#ifndef __O2EM_SDL__
+	set_close_button_callback(window_close_hook);
+	#else
+	printf("DEBUG %p %p %d %d\n", (void*) vscreen, (void*) bmp->pixels, screen->pitch, bmp->pitch);
+	#endif
+	return O2EM_SUCCESS;
+#endif
+}
+
+/*============================================================================*/
+/*============================================================================*/
+void help()
+{
+	printf("Read O2EM2.TXT for command line usage\n");
+	/* TODO rewrite this part*/
+/*	int cnt = 0, cntt = 0, cnttt = 40 , way = 0;*/
+/*
+	int i;
+	static char hl[96][70]=
+	{"-wsize=n",
+     " Window size (1-4)","",
+     "-fullscreen",
+     " Full screen mode","",
+     "-Help",
+     " This instructions","",
+     "-scanlines",
+     " Enable scanlines","",
+	 "-nosound",
+     " Turn off sound emulation","",
+	 "-novoice",
+     " Turn off voice emulation","",
+	 "-svolume=n",
+     " Set sound volume (0-100)","",
+	 "-vvolume=n",
+     " Set voice volume (0-100)","",
+	 "-filter",
+     " Enable low-pass audio filter","",
+	 "-debug",
+     " Start the emulator in "," debug mode","",
+	 "-speed=n",
+     " Relative speed"," (100 = original)","",
+	 "-nolimit",
+     " Turn off speed limiter","",
+	 "-bios=file",
+     " Set the O2 bios file name/dir","",
+     "-biosdir=path",
+     " Set the O2 bios path "," (default= bios/ )","",
+	 "-romdir=path",
+     " Set the O2 roms Path "," (default= roms/ )","",
+     "-scshot=file",
+     " Set the screenshot file "," name/template","",
+	 "-euro",
+     " Use European timing /"," 50Hz mode","",
+	 "-exrom",
+     " Use special 3K program/"," 1K data ROM mode","",
+	 "-3k",
+     " Use 3K rom mapping mode","",
+	 "-s<n>=mode/keys",
+     " Define stick n mode/keys (n=1-2)","",
+	 "-c52",
+     " Start the emulator with "," french Odyssey 2 BIOS","",
+	 "-g7400",
+     " Start the emulator "," with VP+ BIOS","",
+	 "-jopac",
+     " Start the emulator with "," french VP+ bios","",
+	 "-scoretype=m",
+     " Set Scoretype to m (see manual)","",
+	 "-scoreadr=n",
+     " Set Scoreaddress to n "," (decimal value)","",
+	 "-scorefile=file",
+     " Set Output-Scorefile to "," file (highscore.txt)","",
+	 "-score=n",
+     " Set Highscore to n","",
+	 "-savefile=file",
+     " Load/Save State "," from/to file"
+     };
+     for (i = 0; i < 16; i++)
+	     printf("%s\ŧ%s\n", hl[i], hl[i + 1]);*/
+	    /* TODO temp*/
+	/*text_mode(-1);*/
+	/*
+	textout_ex(bmp, font, "O2EM2 v" O2EM_VERSION " Help", 26 , 16, 2, -1);
+	textout_ex(bmp, font, "Use: o2em2 <file> [options]", 26, 26, 2, -1);
+	rect(bmp,20,12,315,228,6);
+	line(bmp,20,35,315,35,6);
+	for (cntt = 0; cntt < 16; cntt++) {
+		textout_ex(bmp, font, hl[cnt+cntt], 26, cnttt, 4, -1);
+		cnttt += 12;
+	}
+    cnttt = 40;
+    finish_display();
+		do {
+			rest(5);
+			if (NeedsPoll) poll_keyboard();
+			if (key[KEY_UP]) {
+                                 cnt ++;
+                                 if (cnt >= 80)
+				 	cnt = 80;
+                                 rectfill(bmp, 25, 36, 306, 227, 0);
+                                 for (cntt=0; cntt<16; cntt++) {
+                                     textout_ex(bmp, font, hl[cnt+cntt], 26, cnttt, 4, -1);
+                                     cnttt += 12;
+                                     }
+                                 cnttt = 40;
+                                 for (way=0;way<8;way++)
+                                 finish_display();
+                             }
+             if (key[KEY_DOWN]) {
+                                 cnt --;
+                                 if (cnt <= 0) cnt = 0;
+                                 rectfill(bmp,25,36,306,227,0);
+                                 for (cntt=0; cntt<16; cntt++)
+                                     {
+                                     textout_ex(bmp, font, hl[cnt+cntt], 26, cnttt, 4, -1);
+                                     cnttt += 12;
+                                     }
+                                 cnttt = 40;
+                                 for (way=0;way<8;way++)
+                                 finish_display();
+                             }
+
+			}
+		while (!key[KEY_ESC]);
+		do {
+			rest(5);
+			if (NeedsPoll) poll_keyboard();
+			} while (key[KEY_ESC]);
+			*/
+}
+
