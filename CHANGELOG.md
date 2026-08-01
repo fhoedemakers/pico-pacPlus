@@ -1,15 +1,82 @@
 # CHANGELOG
 
-First public release of pico-pacPlus.
+**pico-pacPlus** is a Magnavox Odyssey² / Philips VideoPac (G7000) emulator for RP2040 and RP2350 boards. Cartridge dumps are loaded straight from an SD card, video and audio go out over HDMI or DVI, and USB, directly wired NES/SNES and Wii Classic controllers all work — as does a USB keyboard, which many Odyssey² titles need.
 
-# General Info
+Release notes are below, newest first. [Binaries for every board configuration are at the end of this page](#downloads___).
 
-[Binaries for each configuration and PCB design are at the end of this page](#downloads___).
+# Getting started
 
-[See setup section in readme how to install and wire up](https://github.com/fhoedemakers/pico-pacPlus#setup-overview)
+1. Format an SD card as FAT32 (recommended) or exFAT and copy your cartridge dumps (`.bin`) to `/roms/O2E`. Subdirectories are supported.
+2. Copy the Odyssey² BIOS to `/bios/o2rom.bin` on the same card. It is not distributed with the emulator and has to be supplied by you; without it, games fail to load.
+3. Pick the `.uf2` for your board from the [table at the bottom of this page](#downloads___), hold **BOOTSEL** while connecting the board over USB, and copy the file to the drive that appears. The board reboots into the emulator by itself.
+4. Optionally extract the [metadata pack](#downloads___) to the root of the card for box art and descriptions.
+
+[Full setup instructions are in the readme](https://github.com/fhoedemakers/pico-pacPlus#setup-overview). For board-by-board wiring, display modes, PCB designs and 3D-printable cases, see the [pico-infonesPlus documentation](https://github.com/fhoedemakers/pico-infonesPlus#setup) — the supported boards and their pinouts are identical between the two projects, only the firmware differs.
 
 > [!IMPORTANT]
 > Both RP2040 (Pico 1) and RP2350 (Pico 2 and variants) boards are supported. RP2350 is recommended: a few games show minor visual glitches on RP2040.
+
+> [!NOTE]
+> Upgrading from an earlier version only means flashing the new `.uf2`. The settings file on the SD card is unchanged, so your screen mode, colours and other preferences carry over.
+
+
+# v0.2
+
+## New
+
+**Controller Test**
+
+The settings menu (SELECT) has a new **Controller Test** entry. Press a button on any controller and watch it light up on a drawing of a gamepad, with a list underneath of everything that is connected. Useful when a controller does not respond and you want to know whether it is the pad, the port, or the wiring. Hold SELECT+START for two seconds to go back.
+
+**SNES controllers**
+
+The port for directly wired controllers now accepts SNES controllers as well as NES ones. There is nothing to set: the emulator recognises which type is plugged in. NES controllers keep working exactly as before.
+
+**Keyboard, mouse and gamepad together**
+
+A USB mouse — or a wireless keyboard with a built-in touchpad, which counts as one — no longer takes up a controller slot. Keyboard, mouse and gamepad can all be connected at once without one of them being ignored.
+
+**Xbox controllers**
+
+The left thumbstick now works for movement, next to the d-pad.
+
+**More buttons recognised**
+
+Extra buttons on the DualShock 4 / DualSense, PlayStation Classic, Retro-bit Mega Drive Arcade pad, Wii Classic Controller and USB keyboards are now picked up. An Odyssey² joystick has only one action button, so you will mostly notice this in the new Controller Test screen.
+
+## Fixes
+
+**Sound**
+
+- **HDMI (Pico 2 / RP2350 boards)**: fixed a brief audio dropout that returned every few seconds. Also fixed silent HDMI audio on televisions and monitors that are strict about the audio format — displays that stayed quiet before should now play sound.
+- **Fruit Jam and Feather RP2350 with DAC**: fixed having no sound at all when a Wii Classic or SNES Classic Mini controller was already plugged in at power-on. That controller now also works from the moment the menu appears, instead of after a short delay.
+
+**SD card and games**
+
+- The game browser no longer gets stuck when the folder you last used is missing from the card; it returns to the root folder instead.
+- More reliable SD card access, from an updated version of the SD card driver.
+- On boards without PSRAM, starting a game can no longer erase the small area of flash memory where the board keeps its start-up settings.
+
+**Stability**
+
+- Fixed a rare crash caused by a memory alignment problem.
+- Reduced the chance of the screen staying black at start-up on RP2040 boards.
+- The status LEDs no longer cause problems when they fail to start.
+
+## Playing several emulators on one board
+
+pico-pacPlus can also run as part of [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader), which keeps several emulators — and a version of Doom — on a single RP2350 board and shows a menu at power-on to choose between them. From the settings menu you can return to that menu without touching the board. Those images are released together with pico-bootLoader; the downloads at the bottom of this page are the normal standalone versions.
+
+The layout used for these combined installations changed in this release, so a bootable pico-pacPlus image and pico-bootLoader itself have to come from the same generation — do not mix a v0.1 image with a newer loader or the other way around. Building such an image also works again with the latest version of picotool.
+
+## Known issues
+
+- A few titles show minor visual glitches on RP2040. RP2350 is recommended for best compatibility.
+- Not all games have been tested; please register an issue when you encounter one.
+
+## Use of AI
+
+Parts of this release were developed with the help of [Anthropic Claude](https://www.anthropic.com/claude).
 
 
 # v0.1
