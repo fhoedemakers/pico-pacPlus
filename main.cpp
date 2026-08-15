@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <strings.h> // strcasecmp
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include "hardware/vreg.h"
@@ -11,6 +12,7 @@
 #include "nespad.h"
 #include "wiipad.h"
 #include "FrensHelpers.h"
+#include "recentgames.h"
 #include "settings.h"
 #include "FrensFonts.h"
 #include "vumeter.h"
@@ -622,6 +624,26 @@ extern "C" void o2em_poll_input()
             key[o2key] = 1;
     }
 
+#if NES_PIN_CLK != -1
+    // Buttons of a GPIO pad in NES order. A NES pad shifts them out that way
+    // already; a SNES pad puts its B and Y in the A and B slots, so its face
+    // buttons are named instead of taken positionally: physical A drives the
+    // Odyssey fire button, the same button the menu chooses with. Taken
+    // positionally, physical A did nothing at all and B fired.
+    auto nespadGameBits = [](int padnum) -> int
+    {
+        if (nespad_padtype[padnum] != NESPAD_TYPE_SNES)
+        {
+            return nespad_states[padnum];
+        }
+        const uint16_t ext = nespad_states_ext[padnum];
+        int v = ext & (SELECT | START | UP | DOWN | LEFT | RIGHT); // same bits on both pads
+        if (ext & (1u << 8)) v |= A;
+        if (ext & (1u << 0)) v |= B;
+        return v;
+    };
+#endif
+
     bool usbConnected = false;
     for (int i = 0; i < 2; ++i)
     {
@@ -642,11 +664,11 @@ extern "C" void o2em_poll_input()
         if (usbConnected)
         {
             if (i == 1)
-                v = v | nespad_states[1] | nespad_states[0];
+                v = v | nespadGameBits(1) | nespadGameBits(0);
         }
         else
         {
-            v |= nespad_states[i];
+            v |= nespadGameBits(i);
         }
 #endif
 
@@ -884,6 +906,28 @@ int main()
                 f_unlink(O2EM_COMBINED_FILE);
                 printf("Using combined ROM+BIOS from flash (CRC: %08lX)\n",
                        (unsigned long)app_data.crc);
+
+                // Starting a game on a board without PSRAM takes two flash
+                // passes: the raw cart first, then the combined BIOS+ROM image
+                // the previous pass wrote. flashrom() adds whatever ROMINFOFILE
+                // named to the recently played list, so the second pass puts the
+                // temporary combined image at the top of it - and it was just
+                // unlinked, so that entry can never be started again. Drop it;
+                // the real rom was added by the first pass and moves back to
+                // position 0.
+                Frens::Recent::List *rl = Frens::Recent::load();
+                if (rl)
+                {
+                    for (int i = 0; i < rl->count; i++)
+                    {
+                        if (strcasecmp(rl->items[i].path, O2EM_COMBINED_FILE) == 0)
+                        {
+                            Frens::Recent::removeAt(rl, i);
+                            break;
+                        }
+                    }
+                    Frens::Recent::free(rl);
+                }
             }
         }
 

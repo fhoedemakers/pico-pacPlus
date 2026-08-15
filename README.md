@@ -107,11 +107,17 @@ The emulator presents the Odyssey 2 joystick + keyboard mapping on any connected
 
 ### Button mapping
 
-|         | (S)NES | Genesis   | XInput | DualShock/Sense |
-| ------- | ------ | --------- | ------ | --------------- |
-| Button1 | B      | A         | A      | X               |
-| Button2 | A      | B         | B      | Circle          |
-| Select  | Select | Mode or C | Select | Select          |
+|         | (S)NES | Genesis   | XInput | DualShock/Sense | Wii Classic |
+| ------- | ------ | --------- | ------ | --------------- | ----------- |
+| Button1 | B      | A         | A      | X               | B           |
+| Button2 | A      | B         | B      | Circle          | A           |
+| Button3 | X (SNES only) | C  | Y      | Triangle        | X           |
+| Select  | Select | Mode or C | Select | Select          | Select      |
+
+> [!NOTE]
+> An original NES controller has no Button3. Everything reachable with it can also be reached from the settings menu.
+
+A **SNES controller wired to a NES controller port** uses the same buttons as the table above: Button1 is B and Button2 is A. Before v0.3 those pads were read positionally, so physical B acted as Button2, physical Y as Button1, and physical A did nothing at all. SNES→NES adapter cables with conversion logic inside report NES buttons in NES order and are unaffected.
 
 ### Menu
 
@@ -121,6 +127,8 @@ Gamepad:
 - **LEFT/RIGHT**: next / previous page
 - **Button2**: open folder / flash and start game
 - **Button1**: back to parent folder
+- **Button3**: open the [recently played list](#recently-played-games)
+- **START**: show [metadata](#metadata) and box art (when available)
 - **SELECT**: open the settings menu (screen mode, scanlines, framerate display, menu colors, board-specific settings)
 
 USB keyboard:
@@ -128,7 +136,35 @@ USB keyboard:
 - **Cursor keys**: Up / Down / Left / Right
 - **Z**: back to parent folder
 - **X**: open folder / flash and start a game
+- **C**: open the [recently played list](#recently-played-games)
+- **S**: show [metadata](#metadata) and box art (when available)
 - **A**: SELECT
+
+### Recently played games
+
+The menu keeps a list of the **last 20 games you started**, most recent first. Open it with **Button3** in the menu, or with the **Recently played** entry at the top of the settings menu. That entry is only there when the settings menu is opened from the menu — a game cannot be started from inside a running game.
+
+> [!NOTE]
+> On an original 3-button Genesis Mini controller, C acts as SELECT and opens the settings menu instead. Take the **Recently played** entry there.
+
+In the list:
+
+| Button | Action |
+| ------ | ------ |
+| UP/DOWN | Select a game. |
+| Button2 | Start the highlighted game. |
+| Button1 | Close the list and return to the menu. |
+| SELECT | Remove the highlighted game from the list. Asks for confirmation first. This only removes the entry, the ROM on the SD card is left alone. |
+| START | Show [metadata](#metadata) and box art (when available). |
+
+Games are added to the list automatically when you start them, so nothing has to be enabled. Starting a game that is already in the list moves it back to the top. The list closes by itself after a minute without input.
+
+The list is kept in **`/recent_O2E.txt`** in the root of the SD card, as plain text with one game per line. It survives a reboot and can be read, edited or deleted on a PC. Deleting the file simply empties the list, and a damaged file is treated as an empty list — unlike the settings file, nothing else is reset. Each emulator running under [pico-bootLoader](#running-under-pico-bootloader) keeps its own list.
+
+If a game was moved, renamed or deleted on the SD card in the meantime, the list says so instead of starting it. Use SELECT to remove such an entry.
+
+> [!NOTE]
+> On boards without PSRAM, starting a game from the list still writes to flash and reboots, exactly as starting it from the file browser does. Nothing is cached between launches. See [PSRAM](#psram).
 
 ### In game
 
@@ -151,6 +187,30 @@ USB keyboard in-game:
 - **Z**: Button1
 - **X**: Button2
 - All letter keys, number keys, and supported special keys are passed through to the Odyssey 2 keyboard matrix (letters A–Z, digits 0–9, Space, Enter, Minus, Equals, Period, Slash, and numpad `+ / *`), so keyboard-driven games are fully playable.
+
+***
+
+## Running under pico-bootLoader
+
+Instead of flashing this emulator as the only application on your board, you can install it under [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader). The bootloader turns an RP2350 board into a multi-system console: on power-on it shows a menu from which you pick an emulator or game, which is then launched straight from the SD card. Any reset or power cycle brings you back to that menu, so you no longer have to reconnect the board to a computer to switch systems.
+
+Alongside pico-pacPlus, the bootloader can run the NES, SNES, Game Boy / Game Boy Color, Sega Master System / Game Gear, Sega Mega Drive / Genesis and PC Engine emulators, plus native *Doom* and *Duke Nukem 3D* ports.
+
+**You do not have to build anything.** The bootloader's releases page provides a prebuilt bootloader UF2 for each supported board plus `pico-bootLoader_sdcard.zip`, an SD card archive containing ready-to-use emulator builds. In short:
+
+1. Flash the bootloader UF2 for your board via BOOTSEL.
+2. Unpack `pico-bootLoader_sdcard.zip` onto a FAT32 or exFAT SD card.
+3. Copy your cartridge dumps to `/roms/O2E` and the Odyssey 2 BIOS to `/bios/o2rom.bin`, exactly as for a standalone install. The BIOS is not included in the archive — see [BIOS](#bios).
+4. Insert the card and power on.
+
+> [!NOTE]
+> pico-bootLoader requires an **RP2350** board; RP2040 boards are not supported, because the flash layout and UF2 checks are RP2350-specific. See the bootloader's own readme for the current list of supported boards and for the SD card layout.
+
+When the emulator runs under the bootloader, the settings menu gains an extra **Return to emulator selection** entry that takes you back to the picker.
+
+Each emulator installed under the bootloader keeps its own settings file and its own [recently played list](#recently-played-games), so they never overwrite each other's.
+
+If you do want to build the emulator for the bootloader yourself, use the `-b` flag described in [Building from source](#building-from-source). Those builds are relinked to the application partition at `0x10080000` and are written to the `releases_bl` folder instead of `releases`. Note that the binaries on this project's releases page are standalone builds and will **not** work under the bootloader.
 
 ***
 
@@ -185,7 +245,9 @@ Options:
   -w: build for Pico_w or Pico2_w
   -m: run cmake only, do not build the project
   -e: use the pico-extras based I2S audio driver (default: legacy custom driver)
-  -b: build for the resident emuLoader bootloader (links the image at 0x10100000 instead of 0x10000000)
+  -b: (RP2350 only, must also use -2) build for the resident emuLoader bootloader; relinks the
+      image to the application partition at 0x10080000 instead of 0x10000000 and copies the
+      resulting UF2 to releases_bl instead of releases
   -D: Force DVI over HSTX
   -c <hwconfig>: specify the hardware configuration
      1: Pimoroni Pico DV Demo Base (Default)

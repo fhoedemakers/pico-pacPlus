@@ -20,6 +20,57 @@ Release notes are below, newest first. [Binaries for every board configuration a
 > Upgrading from an earlier version only means flashing the new `.uf2`. The settings file on the SD card is unchanged, so your screen mode, colours and other preferences carry over.
 
 
+# v0.3
+
+## New
+
+**Recently played**
+
+The menu now keeps a list of the **last 20 games you started**, newest first. Open it with **X** in the ROM browser — that is button 3 on any pad: X on a SNES controller, Y on XInput, Triangle on PlayStation, C on Genesis — or from the new **Recently played** entry at the top of the settings menu.
+
+In the list, **A** starts the highlighted game, **SELECT** removes it from the list, **START** shows its box art, and **B** closes the list. The settings menu only offers the entry when it is opened from the ROM browser, not from inside a running game.
+
+The list is plain text in `/recent_O2E.txt` in the SD card root, one line per game, so it survives a reboot and can be edited or deleted on a PC. A game that is no longer on the card is reported as missing when you try to start it and can be dropped with SELECT. A damaged or unreadable list simply comes up empty — unlike the settings file, nothing gets reset. Each emulator installed under [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader) keeps its own list.
+
+**SNES controllers on a NES controller port use A and B**
+
+A **SNES controller wired to a NES controller port** now uses its A and B buttons. Such a pad shifts out B and Y where a NES pad has A and B, so those were the two buttons that did anything, and physical A did nothing at all — in games, where B fired, and in the menu, where "choose" landed on B. Its four face buttons are now named rather than taken positionally: **A is the Odyssey² fire button**, and in the menu A chooses while B goes back, the same as on USB and Wii Classic pads. The Odyssey² joystick has only one action button, so X, Y, L and R have no equivalent and are ignored, as on those pads.
+
+NES pads are unaffected, and so are SNES→NES adapter cables with conversion logic inside, which report NES buttons in NES order. The 12-button read is now confirmed against genuine SNES hardware, with a SNES controller port wired straight to the NES port GPIOs. Adapter *cables* are the thing to watch out for: several contain a converter, sometimes moulded into the plug, and then only 8 buttons can ever arrive.
+
+## Fixes
+
+**Controller Test**
+
+- The screen now names the buttons of a GPIO-wired pad according to what is actually attached. It used to label them in SNES order unconditionally, which is wrong for a NES pad: a NES pad shifts out the same first bits with different meanings (bit 0 is A, not B, and bit 1 is B, not Y). A NES pad now gets NES names with its A/X/L/R cells blanked, and a SNES pad gets SNES names. A port that has not identified itself yet — an idle SNES pad, an empty port and an 8-bit adapter cable are indistinguishable on the wire — shows NES names but keeps A/X/L/R on screen, so pressing one of those switches it to SNES names.
+- The screen also shows the **detected pad type** and, for the two GPIO ports, the **raw word the pad shifted out** (`Sent by pad: 0002 hex`), taken before any NES/SNES interpretation. This tells a button that never reaches the Pico apart from one that is decoded wrong.
+- Leaving the Controller Test screen no longer drops into the screensaver. The settings menu's idle timeout mistook the "just came back from another screen" marker for a timestamp, so anything that opened a screen of its own looked like a minute of inactivity on return.
+
+**Display (RP2040 / DVI boards)**
+
+Line buffers queued for a scanline that a later margin change puts inside a blank margin are now retired instead of being stranded. Stranded buffers deadlocked both cores and left the display stuck on red lines. This is the failure the emulator already worked around by running with zero margins; the driver is now safe across the menu↔game transition regardless.
+
+**Settings**
+
+"Reset to defaults" no longer carries a stale scanline flag over from the loaded settings file.
+
+## Developer
+
+- The picoDVI line buffer pool can be sized independently with `-DDVI_N_LINE_BUFFERS=n` (default unchanged at 5). pico-pacPlus does not raise it — SRAM on the RP2040 line-streaming path is already at its ceiling.
+- The HSTX debug dump reports HDMI audio underruns **per second** next to the cumulative count. The cumulative counter runs from boot and includes the ~11025/s produced while browsing ROMs, so it says nothing about whether underruns are still happening.
+- `bld.sh` passes `$EXTRA_CMAKE_ARGS` through to cmake, so project-specific options can be set without changing the shared script.
+
+## Known issues
+
+- On boards without PSRAM, starting a game still writes to flash and reboots twice — once for the cartridge and once for the combined BIOS+ROM image — so launches are no quicker than in v0.2, including for a game you just played.
+- A few titles show minor visual glitches on RP2040. RP2350 is recommended for best compatibility.
+- Not all games have been tested; please register an issue when you encounter one.
+
+## Use of AI
+
+Parts of this release were developed with the help of [Anthropic Claude](https://www.anthropic.com/claude).
+
+
 # v0.2
 
 ## New
