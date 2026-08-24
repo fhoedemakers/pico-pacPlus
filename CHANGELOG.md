@@ -20,6 +20,16 @@ Release notes are below, newest first. [Binaries for every board configuration a
 > Upgrading from an earlier version only means flashing the new `.uf2`. The settings file on the SD card is unchanged, so your screen mode, colours and other preferences carry over.
 
 
+# v0.4
+
+A maintenance release. It brings the shared menu and support code up to date; the emulator itself is unchanged. Upgrading is only a matter of flashing the new `.uf2` — your settings, saves and save states on the SD card are untouched.
+
+## Fixes
+
+- **DVI-only monitors show a picture again.** With **Display Mode** set to DVI, some older screens that accept DVI but not HDMI stayed black. They work again.
+- **Clone Pico boards no longer crash at start-up.** Boards fitted with a cheaper flash chip than a genuine Raspberry Pi Pico could hang on power-on. The chip is now recognised and driven at a speed it can handle. Genuine Picos are unaffected.
+- **Steadier start-up.** The board lets its power settle before switching to the higher clock speed.
+
 # v0.3
 
 ## New
